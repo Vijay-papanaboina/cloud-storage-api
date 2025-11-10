@@ -34,7 +34,9 @@ CREATE TABLE batch_jobs (
     CONSTRAINT chk_processed_items CHECK (
         processed_items <= total_items
     ),
-    CONSTRAINT fk_batch_job_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+    CONSTRAINT chk_processed_and_failed_items CHECK (
+        processed_items + failed_items <= total_items
+    ),    CONSTRAINT fk_batch_job_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
 );
 
 -- Create indexes

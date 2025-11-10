@@ -107,7 +107,6 @@ public class FileServiceImpl implements FileService {
         fileEntity.setCloudinaryUrl(cloudinaryUrl);
         fileEntity.setCloudinarySecureUrl(cloudinarySecureUrl);
         fileEntity.setCreatedAt(Instant.now());
-        fileEntity.setUpdatedAt(Instant.now());
 
         // Save to database
         File savedFile = fileRepository.save(fileEntity);
@@ -339,8 +338,6 @@ public class FileServiceImpl implements FileService {
             file.setFolderPath(newFolderPath);
         }
 
-        file.setUpdatedAt(Instant.now());
-
         // Save to database
         File updatedFile = fileRepository.save(file);
         log.info("File updated successfully: fileId={}", id);
@@ -360,7 +357,6 @@ public class FileServiceImpl implements FileService {
         // Soft delete
         file.setDeleted(true);
         file.setDeletedAt(Instant.now());
-        file.setUpdatedAt(Instant.now());
 
         // Save to database
         fileRepository.save(file);
@@ -454,7 +450,6 @@ public class FileServiceImpl implements FileService {
         for (File file : files) {
             file.setDeleted(true);
             file.setDeletedAt(now);
-            file.setUpdatedAt(now);
         }
 
         // Validate files is not null
@@ -674,7 +669,6 @@ public class FileServiceImpl implements FileService {
         BatchJob batchJob = new BatchJob(user, BatchJobType.UPLOAD, files.length);
         batchJob.setStatus(BatchJobStatus.QUEUED);
         batchJob.setCreatedAt(Instant.now());
-        batchJob.setUpdatedAt(Instant.now());
 
         // Save batch job
         BatchJob savedBatchJob = batchJobRepository.save(batchJob);

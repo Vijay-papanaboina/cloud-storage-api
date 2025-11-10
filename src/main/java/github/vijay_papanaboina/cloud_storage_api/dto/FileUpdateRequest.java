@@ -1,0 +1,39 @@
+package github.vijay_papanaboina.cloud_storage_api.dto;
+
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
+
+public class FileUpdateRequest {
+    @Size(max = 255, message = "Filename must not exceed 255 characters")
+    private String filename;
+
+    @Size(max = 500, message = "Folder path must not exceed 500 characters")
+    @Pattern(regexp = "^/.*|^$", message = "Folder path must start with '/' if provided")
+    private String folderPath;
+
+    // Constructors
+    public FileUpdateRequest() {
+    }
+
+    public FileUpdateRequest(String filename, String folderPath) {
+        this.filename = filename;
+        this.folderPath = folderPath;
+    }
+
+    // Getters and Setters
+    public String getFilename() {
+        return filename;
+    }
+
+    public void setFilename(String filename) {
+        this.filename = filename;
+    }
+
+    public String getFolderPath() {
+        return folderPath;
+    }
+
+    public void setFolderPath(String folderPath) {
+        this.folderPath = folderPath;
+    }
+}

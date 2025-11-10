@@ -48,4 +48,19 @@ public interface StorageService {
      * @return Map containing resource information
      */
     Map<String, Object> getResourceDetails(String publicId);
+
+    /**
+     * Generate transformation URL for image/video
+     *
+     * @param publicId Cloudinary public ID
+     * @param secure   Use HTTPS URL
+     * @param width    Optional width
+     * @param height   Optional height
+     * @param crop     Optional crop mode
+     * @param quality  Optional quality setting
+     * @param format   Optional output format
+     * @return Transformed Cloudinary URL
+     */
+    String getTransformUrl(String publicId, boolean secure, Integer width, Integer height,
+            String crop, String quality, String format);
 }

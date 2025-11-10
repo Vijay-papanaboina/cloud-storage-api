@@ -1,6 +1,7 @@
 package github.vijay_papanaboina.cloud_storage_api.service.storage;
 
 import com.cloudinary.Cloudinary;
+import com.cloudinary.Transformation;
 import com.cloudinary.utils.ObjectUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,6 +59,7 @@ public class CloudinaryStorageService implements StorageService {
             uploadOptions.put("unique_filename", false);
 
             // Upload to Cloudinary
+            @SuppressWarnings("unchecked")
             Map<String, Object> result = cloudinary.uploader().upload(file.getBytes(), uploadOptions);
 
             log.info("File uploaded successfully to Cloudinary: publicId={}, size={}",
@@ -165,6 +167,46 @@ public class CloudinaryStorageService implements StorageService {
             log.error("Error getting resource details: publicId={}, error={}",
                     publicId, e.getMessage(), e);
             throw new StorageException("Failed to get resource details from Cloudinary", e);
+        }
+    }
+
+    @Override
+    public String getTransformUrl(String publicId, boolean secure, Integer width, Integer height,
+            String crop, String quality, String format) {
+        try {
+            @SuppressWarnings("rawtypes")
+            Transformation transformation = new Transformation();
+
+            if (width != null) {
+                transformation.width(width);
+            }
+            if (height != null) {
+                transformation.height(height);
+            }
+            if (crop != null && !crop.isEmpty()) {
+                transformation.crop(crop);
+            }
+            if (quality != null && !quality.isEmpty()) {
+                transformation.quality(quality);
+            }
+
+            com.cloudinary.Url urlBuilder = cloudinary.url()
+                    .secure(secure)
+                    .transformation(transformation);
+
+            if (format != null && !format.isEmpty()) {
+                urlBuilder.format(format);
+            }
+
+            String url = urlBuilder.generate(publicId);
+
+            log.info("Generated transformation URL: publicId={}, width={}, height={}, crop={}, quality={}, format={}",
+                    publicId, width, height, crop, quality, format);
+            return url;
+        } catch (Exception e) {
+            log.error("Failed to generate transformation URL: publicId={}, error={}",
+                    publicId, e.getMessage(), e);
+            throw new StorageException("Failed to generate transformation URL", e);
         }
     }
 

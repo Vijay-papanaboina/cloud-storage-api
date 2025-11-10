@@ -542,20 +542,6 @@ public class CloudinaryStorageService implements StorageService {
     }
 
     /**
-     * Extract file extension from filename
-     */
-    private String getFileExtension(String filename) {
-        if (filename == null || filename.isEmpty()) {
-            return null;
-        }
-        int lastDotIndex = filename.lastIndexOf('.');
-        if (lastDotIndex > 0 && lastDotIndex < filename.length() - 1) {
-            return filename.substring(lastDotIndex + 1).toLowerCase();
-        }
-        return null;
-    }
-
-    /**
      * Infer resource_type from format (file extension)
      * 
      * @param format File format/extension (e.g., "jpg", "png", "mp4", "pdf")

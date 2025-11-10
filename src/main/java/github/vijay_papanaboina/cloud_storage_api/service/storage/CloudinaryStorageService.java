@@ -36,12 +36,11 @@ public class CloudinaryStorageService implements StorageService {
             // Generate unique public ID (UUID only, no extension)
             String publicId = UUID.randomUUID().toString();
 
-            // Extract file extension from original filename
+            // Validate original filename (required for Cloudinary upload)
             String originalFilename = file.getOriginalFilename();
             if (originalFilename == null || originalFilename.isBlank()) {
                 throw new IllegalArgumentException("File original filename cannot be null or blank");
             }
-            String extension = getFileExtension(originalFilename);
 
             // Prepare upload options using SDK 2.0 ObjectUtils for cleaner code
             Map<String, Object> uploadOptions = new HashMap<>();
@@ -53,16 +52,38 @@ public class CloudinaryStorageService implements StorageService {
             uploadOptions.put("public_id", publicId);
             uploadOptions.put("use_filename", false);
             uploadOptions.put("unique_filename", false);
-            uploadOptions.put("type", "authenticated"); // Require signed URLs for access
+
+            // IMPORTANT: All uploads use type="authenticated" for security.
+            // This means:
+            // 1. All files require signed URLs for access (use getFileUrl(),
+            // generateSignedDownloadUrl(), etc.)
+            // 2. Files cannot be accessed via public URLs without signatures
+            // 3. This is a security best practice to prevent unauthorized access
+            //
+            // BREAKING CHANGE: If migrating from public uploads:
+            // - Existing publicly-accessible files will continue to work with public URLs
+            // - New files uploaded with this service require signed URLs
+            // - Update all consuming applications to use signed URL methods
+            // - Consider a migration strategy for existing files if needed
+            //
+            // To override this behavior, pass "type" in the options parameter.
+            // However, this is NOT recommended for security reasons.
+            if (!uploadOptions.containsKey("type")) {
+                uploadOptions.put("type", "authenticated");
+            }
+
             uploadOptions.put("resource_type", uploadOptions.getOrDefault("resource_type", "auto"));
 
             if (folderPath != null && !folderPath.isEmpty()) {
                 uploadOptions.put("folder", folderPath);
             }
 
-            if (extension != null && !uploadOptions.containsKey("format")) {
-                uploadOptions.put("format", extension);
-            }
+            // Note: Format parameter is not set at upload time. Format transformations
+            // should be applied via transformation parameters in delivery URLs (e.g., f=
+            // for images).
+            // For videos requiring format conversion, upload with explicit
+            // resource_type='video'
+            // instead of 'auto'. The original file format is preserved at upload.
 
             // Upload to Cloudinary
             @SuppressWarnings("unchecked")

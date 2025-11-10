@@ -17,6 +17,9 @@ public class FileStatisticsResponse {
 
     public FileStatisticsResponse(long totalFiles, long totalSize, long averageFileSize, String storageUsed,
             Map<String, Long> byContentType, Map<String, Long> byFolder) {
+        if (totalFiles < 0 || totalSize < 0 || averageFileSize < 0) {
+            throw new IllegalArgumentException("Statistics values must not be negative");
+        }
         this.totalFiles = totalFiles;
         this.totalSize = totalSize;
         this.averageFileSize = averageFileSize;
@@ -24,8 +27,29 @@ public class FileStatisticsResponse {
             throw new IllegalArgumentException("storageUsed must not be null");
         }
         this.storageUsed = storageUsed;
-        this.byContentType = byContentType != null ? Map.copyOf(byContentType) : Map.of();
-        this.byFolder = byFolder != null ? Map.copyOf(byFolder) : Map.of();
+        this.byContentType = byContentType != null ? validateAndCopyMap(byContentType, "byContentType") : Map.of();
+        this.byFolder = byFolder != null ? validateAndCopyMap(byFolder, "byFolder") : Map.of();
+    }
+
+    /**
+     * Validate that the map contains no null keys or values, then create an
+     * immutable copy.
+     * 
+     * @param map     The map to validate and copy
+     * @param mapName The name of the map parameter (for error messages)
+     * @return An immutable copy of the map
+     * @throws IllegalArgumentException if the map contains null keys or values
+     */
+    private static Map<String, Long> validateAndCopyMap(Map<String, Long> map, String mapName) {
+        if (map.containsKey(null)) {
+            throw new IllegalArgumentException(
+                    String.format("%s must not contain null keys", mapName));
+        }
+        if (map.containsValue(null)) {
+            throw new IllegalArgumentException(
+                    String.format("%s must not contain null values", mapName));
+        }
+        return Map.copyOf(map);
     }
 
     // Getters

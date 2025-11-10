@@ -711,7 +711,7 @@ public class FileServiceImpl implements FileService {
 
         // Get batch job (user-scoped)
         BatchJob batchJob = batchJobRepository.findByIdAndUserId(jobId, userId)
-                .orElseThrow(() -> new RuntimeException("Batch job not found: " + jobId));
+                .orElseThrow(() -> new NotFoundException("Batch job not found: " + jobId, jobId));
 
         // Build response with current status
         BulkUploadResponse response = new BulkUploadResponse();
@@ -739,8 +739,8 @@ public class FileServiceImpl implements FileService {
                         batchJob.getProcessedItems(), batchJob.getFailedItems());
                 break;
             case FAILED:
-                message = "Bulk upload job failed: "
-                        + (batchJob.getErrorMessage() != null ? batchJob.getErrorMessage() : "Unknown error");
+                message = "Bulk upload job failed: " + batchJob.getErrorMessage() != null ? batchJob.getErrorMessage()
+                        : "Unknown error";
                 break;
             default:
                 message = "Bulk upload job status: " + batchJob.getStatus().name();

@@ -25,6 +25,12 @@ public class CloudStorageApiException extends RuntimeException {
         this.args = args == null ? null : Arrays.copyOf(args, args.length);
     }
 
+    public CloudStorageApiException(String errorCode, String message, Throwable cause, Object... args) {
+        super(message, cause);
+        this.errorCode = errorCode;
+        this.args = args == null ? null : Arrays.copyOf(args, args.length);
+    }
+
     public String getErrorCode() {
         return errorCode;
     }

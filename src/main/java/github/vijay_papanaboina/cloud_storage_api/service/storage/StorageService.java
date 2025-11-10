@@ -7,10 +7,37 @@ import java.util.Map;
 public interface StorageService {
     /**
      * Upload a file to Cloudinary
+     * <p>
+     * <strong>IMPORTANT - Authenticated Access:</strong> By default, all files are
+     * uploaded
+     * with {@code type="authenticated"}, which means:
+     * <ul>
+     * <li>Files require signed URLs for access (use
+     * {@link #getFileUrl(String, boolean)},
+     * {@link #generateSignedDownloadUrl(String, int)}, etc.)</li>
+     * <li>Files cannot be accessed via public URLs without signatures</li>
+     * <li>This is a security best practice to prevent unauthorized access</li>
+     * </ul>
+     * <p>
+     * <strong>BREAKING CHANGE:</strong> If migrating from public uploads:
+     * <ul>
+     * <li>Existing publicly-accessible files will continue to work with public
+     * URLs</li>
+     * <li>New files uploaded with this service require signed URLs</li>
+     * <li>Update all consuming applications to use signed URL methods</li>
+     * <li>Consider a migration strategy for existing files if needed</li>
+     * </ul>
+     * <p>
+     * To override the default authenticated type, pass {@code "type"} in the
+     * options parameter.
+     * However, this is NOT recommended for security reasons.
      *
      * @param file       The file to upload
      * @param folderPath Optional folder path (e.g., "/photos/2024")
-     * @param options    Additional upload options (resource_type, format, etc.)
+     * @param options    Additional upload options (resource_type, format, type,
+     *                   etc.).
+     *                   Note: If "type" is not provided, defaults to
+     *                   "authenticated".
      * @return Map containing Cloudinary response with public_id, url, secure_url,
      *         etc.
      * @throws StorageException if the file is null or empty, if file size exceeds

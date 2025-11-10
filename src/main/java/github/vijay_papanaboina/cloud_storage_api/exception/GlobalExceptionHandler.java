@@ -32,7 +32,7 @@ public class GlobalExceptionHandler {
         error.setTimestamp(Instant.now());
         error.setStatus(HttpStatus.NOT_FOUND.value());
         error.setError("Not Found");
-        error.setMessage("The requested file was not found");
+        error.setMessage(ex.getMessage());
         error.setPath(request.getRequestURI());
         error.setErrorCode(ex.getErrorCode() != null ? ex.getErrorCode() : "FILE_NOT_FOUND");
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(error);

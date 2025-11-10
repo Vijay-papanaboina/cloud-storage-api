@@ -40,3 +40,4 @@ application-prod.yaml
 application-dev.yml
 application-test.yml
 application-prod.yml
+logs/

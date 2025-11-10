@@ -12,6 +12,7 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "batch_jobs", indexes = {
+        @Index(name = "idx_batch_job_user_id", columnList = "user_id"),
         @Index(name = "idx_batch_job_type", columnList = "job_type"),
         @Index(name = "idx_batch_job_status", columnList = "status"),
         @Index(name = "idx_batch_job_created_at", columnList = "created_at")
@@ -22,6 +23,11 @@ public class BatchJob {
     @GeneratedValue(strategy = GenerationType.UUID)
     @Column(name = "id", updatable = false, nullable = false)
     private UUID id;
+
+    @NotNull
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
 
     @NotNull
     @Enumerated(EnumType.STRING)
@@ -83,6 +89,12 @@ public class BatchJob {
         this.totalItems = totalItems;
     }
 
+    public BatchJob(User user, BatchJobType jobType, Integer totalItems) {
+        this.user = user;
+        this.jobType = jobType;
+        this.totalItems = totalItems;
+    }
+
     // Getters and Setters
     public UUID getId() {
         return id;
@@ -90,6 +102,14 @@ public class BatchJob {
 
     public void setId(UUID id) {
         this.id = id;
+    }
+
+    public User getUser() {
+        return user;
+    }
+
+    public void setUser(User user) {
+        this.user = user;
     }
 
     public BatchJobType getJobType() {

@@ -10,10 +10,9 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "users", indexes = {
-    @Index(name = "idx_users_username", columnList = "username"),
-    @Index(name = "idx_users_email", columnList = "email"),
-    @Index(name = "idx_users_role", columnList = "role"),
-    @Index(name = "idx_users_active", columnList = "active")
+        @Index(name = "idx_users_username", columnList = "username"),
+        @Index(name = "idx_users_email", columnList = "email"),
+        @Index(name = "idx_users_active", columnList = "active")
 })
 public class User {
 
@@ -37,11 +36,6 @@ public class User {
     @Size(max = 255)
     @Column(name = "password_hash", nullable = false, length = 255)
     private String passwordHash;
-
-    @NotNull
-    @Enumerated(EnumType.STRING)
-    @Column(name = "role", nullable = false, length = 50)
-    private UserRole role = UserRole.USER;
 
     @NotNull
     @Column(name = "active", nullable = false)
@@ -105,14 +99,6 @@ public class User {
         this.passwordHash = passwordHash;
     }
 
-    public UserRole getRole() {
-        return role;
-    }
-
-    public void setRole(UserRole role) {
-        this.role = role;
-    }
-
     public Boolean getActive() {
         return active;
     }
@@ -156,8 +142,10 @@ public class User {
     // equals, hashCode, toString
     @Override
     public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
+        if (this == o)
+            return true;
+        if (o == null || getClass() != o.getClass())
+            return false;
         User user = (User) o;
         return Objects.equals(id, user.id);
     }
@@ -173,9 +161,7 @@ public class User {
                 "id=" + id +
                 ", username='" + username + '\'' +
                 ", email='" + email + '\'' +
-                ", role=" + role +
                 ", active=" + active +
                 '}';
     }
 }
-

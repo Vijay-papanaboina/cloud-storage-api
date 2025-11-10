@@ -13,7 +13,7 @@ public class TransformRequest {
     @Pattern(regexp = "^(fill|fit|scale|thumb|crop|limit|pad|lfill|limit_pad|fit_pad|auto|imagga_scale|imagga_crop)?$", message = "Invalid crop mode. Valid values: fill, fit, scale, thumb, crop, limit, pad, lfill, limit_pad, fit_pad, auto, imagga_scale, imagga_crop")
     private String crop;
 
-    @Pattern(regexp = "^(auto|best|good|eco|low|80|90|95|100)?$", message = "Invalid quality. Valid values: auto, best, good, eco, low, or numeric value 80-100")
+    @Pattern(regexp = "^(auto|best|good|eco|low|(8[0-9]|9[0-9]|100))?$", message = "Invalid quality. Valid values: auto, best, good, eco, low, or numeric value 80-100")
     private String quality;
 
     @Pattern(regexp = "^(webp|jpg|jpeg|png|gif|bmp|tiff|ico|pdf|svg|mp4|webm|ogv|flv|mov|wmv|mp3|wav|ogg|aac|flac)?$", message = "Invalid format")

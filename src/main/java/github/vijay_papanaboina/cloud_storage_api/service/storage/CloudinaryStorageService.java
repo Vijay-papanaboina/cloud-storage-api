@@ -3,6 +3,7 @@ package github.vijay_papanaboina.cloud_storage_api.service.storage;
 import com.cloudinary.Cloudinary;
 import com.cloudinary.Transformation;
 import com.cloudinary.utils.ObjectUtils;
+import github.vijay_papanaboina.cloud_storage_api.exception.StorageException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -32,31 +33,36 @@ public class CloudinaryStorageService implements StorageService {
         validateFile(file);
 
         try {
-            // Generate unique filename (UUID with original extension)
-            String originalFilename = file.getOriginalFilename();
-            String extension = getFileExtension(originalFilename);
-            String publicId = UUID.randomUUID().toString() + (extension != null ? "." + extension : "");
+            // Generate unique public ID (UUID only, no extension)
+            String publicId = UUID.randomUUID().toString();
 
-            // Prepare upload options
+            // Extract file extension from original filename
+            String originalFilename = file.getOriginalFilename();
+            if (originalFilename == null || originalFilename.isBlank()) {
+                throw new IllegalArgumentException("File original filename cannot be null or blank");
+            }
+            String extension = getFileExtension(originalFilename);
+
+            // Prepare upload options using SDK 2.0 ObjectUtils for cleaner code
             Map<String, Object> uploadOptions = new HashMap<>();
             if (options != null) {
                 uploadOptions.putAll(options);
             }
 
-            // Add folder path if provided
+            // Build options map with defaults using ObjectUtils
+            uploadOptions.put("public_id", publicId);
+            uploadOptions.put("use_filename", false);
+            uploadOptions.put("unique_filename", false);
+            uploadOptions.put("type", "authenticated"); // Require signed URLs for access
+            uploadOptions.put("resource_type", uploadOptions.getOrDefault("resource_type", "auto"));
+
             if (folderPath != null && !folderPath.isEmpty()) {
                 uploadOptions.put("folder", folderPath);
             }
 
-            // Set resource type to auto-detect
-            if (!uploadOptions.containsKey("resource_type")) {
-                uploadOptions.put("resource_type", "auto");
+            if (extension != null && !uploadOptions.containsKey("format")) {
+                uploadOptions.put("format", extension);
             }
-
-            // Use generated public ID
-            uploadOptions.put("public_id", publicId);
-            uploadOptions.put("use_filename", false);
-            uploadOptions.put("unique_filename", false);
 
             // Upload to Cloudinary
             @SuppressWarnings("unchecked")
@@ -78,8 +84,23 @@ public class CloudinaryStorageService implements StorageService {
     @Override
     public byte[] downloadFile(String publicId) {
         try {
-            // Get file URL and download via HTTP
-            String url = cloudinary.url().secure(true).generate(publicId);
+            // Get resource details to determine resource type for authenticated resources
+            Map<String, Object> resourceDetails = getResourceDetails(publicId, null);
+            String resourceType = (String) resourceDetails.get("resource_type");
+
+            // Build signed authenticated URL for resources uploaded with
+            // type="authenticated"
+            com.cloudinary.Url urlBuilder = cloudinary.url()
+                    .secure(true)
+                    .signed(true)
+                    .type("authenticated");
+
+            // Include resourceType if needed (not "auto" or null)
+            if (resourceType != null && !resourceType.isEmpty() && !resourceType.equals("auto")) {
+                urlBuilder.resourceType(resourceType);
+            }
+
+            String url = urlBuilder.generate(publicId);
             java.net.URI uri = java.net.URI.create(url);
             java.net.URL fileUrl = uri.toURL();
             try (java.io.InputStream inputStream = fileUrl.openStream();
@@ -114,19 +135,77 @@ public class CloudinaryStorageService implements StorageService {
     @Override
     public boolean deleteFile(String publicId) {
         try {
+            // Fetch resource details to obtain the actual resource_type
+            // This is necessary because destroy() defaults to resource_type="image",
+            // which causes failures for non-image assets uploaded with resource_type="auto"
+            Map<String, Object> resourceDetails = getResourceDetails(publicId, null);
+            String resourceType = (String) resourceDetails.get("resource_type");
+
+            // Handle "auto" or missing resource_type by inferring from format
+            if (resourceType == null || resourceType.isEmpty() || resourceType.equals("auto")) {
+                String format = (String) resourceDetails.get("format");
+                if (format != null && !format.isEmpty()) {
+                    resourceType = inferResourceTypeFromFormat(format);
+                    log.info("Inferred resource_type from format for deletion: publicId={}, format={}, resourceType={}",
+                            publicId, format, resourceType);
+                } else {
+                    // Try deleting as each type if format is missing
+                    log.warn(
+                            "Resource type is 'auto' and format is missing, attempting deletion for each type: publicId={}",
+                            publicId);
+                    String[] resourceTypes = { "image", "video", "raw" };
+                    for (String type : resourceTypes) {
+                        try {
+                            Map<String, Object> destroyOptions = new HashMap<>();
+                            destroyOptions.put("resource_type", type);
+                            destroyOptions.put("type", "authenticated");
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> result = cloudinary.uploader().destroy(publicId, destroyOptions);
+                            String resultValue = result.get("result") != null ? result.get("result").toString() : "";
+                            if ("ok".equals(resultValue)) {
+                                log.info("File deleted successfully by trying resource_type={}: publicId={}", type,
+                                        publicId);
+                                return true;
+                            }
+                        } catch (Exception e) {
+                            // Continue to next type
+                            continue;
+                        }
+                    }
+                    // If all attempts failed, throw exception
+                    throw new StorageException(
+                            "Cannot determine resource type for deletion: resource_type is 'auto' and format is missing for publicId: "
+                                    + publicId);
+                }
+            }
+
+            // Prepare destroy options with the correct resource_type
+            Map<String, Object> destroyOptions = new HashMap<>();
+            destroyOptions.put("resource_type", resourceType);
+            destroyOptions.put("type", "authenticated"); // Match the upload type
+
             @SuppressWarnings("unchecked")
-            Map<String, Object> result = cloudinary.uploader().destroy(publicId, ObjectUtils.emptyMap());
+            Map<String, Object> result = cloudinary.uploader().destroy(publicId, destroyOptions);
             String resultValue = result.get("result") != null ? result.get("result").toString() : "";
             boolean deleted = "ok".equals(resultValue);
 
             if (deleted) {
-                log.info("File deleted successfully from Cloudinary: publicId={}", publicId);
+                log.info("File deleted successfully from Cloudinary: publicId={}, resourceType={}",
+                        publicId, resourceType);
             } else {
-                log.warn("File deletion returned unexpected result: publicId={}, result={}",
-                        publicId, resultValue);
+                log.warn("File deletion returned unexpected result: publicId={}, resourceType={}, result={}",
+                        publicId, resourceType, resultValue);
             }
 
             return deleted;
+        } catch (StorageException e) {
+            // If resource not found, return false instead of throwing
+            if (e.getMessage() != null && e.getMessage().contains("not found")) {
+                log.warn("File not found in Cloudinary for deletion: publicId={}", publicId);
+                return false;
+            }
+            // Re-throw StorageException for other cases
+            throw e;
         } catch (Exception e) {
             if (e.getMessage() != null && e.getMessage().contains("not found")) {
                 log.warn("File not found in Cloudinary for deletion: publicId={}", publicId);
@@ -141,31 +220,150 @@ public class CloudinaryStorageService implements StorageService {
     @Override
     public String getFileUrl(String publicId, boolean secure) {
         try {
-            String url = cloudinary.url()
+            // Get resource details to determine resource type for authenticated resources
+            Map<String, Object> resourceDetails = getResourceDetails(publicId, null);
+            String resourceType = (String) resourceDetails.get("resource_type");
+
+            // Build signed authenticated URL for resources uploaded with
+            // type="authenticated"
+            com.cloudinary.Url urlBuilder = cloudinary.url()
                     .secure(secure)
-                    .generate(publicId);
+                    .signed(true)
+                    .type("authenticated");
+
+            // Include resourceType if needed (not "auto" or null)
+            if (resourceType != null && !resourceType.isEmpty() && !resourceType.equals("auto")) {
+                urlBuilder.resourceType(resourceType);
+            }
+
+            String url = urlBuilder.generate(publicId);
+
+            log.info("Generated signed URL for authenticated resource: publicId={}, resourceType={}, secure={}",
+                    publicId, resourceType, secure);
             return url;
         } catch (Exception e) {
-            log.error("Failed to generate Cloudinary URL: publicId={}, error={}",
+            log.error("Failed to generate signed Cloudinary URL: publicId={}, error={}",
                     publicId, e.getMessage(), e);
             throw new StorageException("Failed to generate Cloudinary URL", e);
         }
     }
 
     @Override
-    public Map<String, Object> getResourceDetails(String publicId) {
+    public String generateSignedDownloadUrl(String publicId, int expirationMinutes) {
+        return generateSignedDownloadUrl(publicId, expirationMinutes, null);
+    }
+
+    @Override
+    public String generateSignedDownloadUrl(String publicId, int expirationMinutes, String resourceType) {
         try {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> resource = (Map<String, Object>) cloudinary.api().resource(publicId,
-                    ObjectUtils.emptyMap());
-            return resource;
-        } catch (Exception e) {
-            if (e.getMessage() != null && e.getMessage().contains("not found")) {
-                log.error("Resource not found in Cloudinary: publicId={}", publicId);
-                throw new StorageException("Resource not found in Cloudinary: " + publicId, e);
+            // Validate expirationMinutes to prevent overflow
+            if (expirationMinutes < 0) {
+                throw new IllegalArgumentException("expirationMinutes must be non-negative");
             }
-            log.error("Error getting resource details: publicId={}, error={}",
-                    publicId, e.getMessage(), e);
+            // Check for potential overflow: expirationMinutes * 60 should fit in long
+            long expirationSeconds = (long) expirationMinutes * 60L;
+            if (expirationSeconds > Long.MAX_VALUE / 1000L) {
+                throw new IllegalArgumentException(
+                        "expirationMinutes too large: " + expirationMinutes + " would cause overflow");
+            }
+
+            // Generate private download URL with enforced expiration
+            // This approach uses privateDownload which enforces expiration via expires_at
+            // First, get resource details to extract format
+            Map<String, Object> resourceDetails = getResourceDetails(publicId, resourceType);
+            String format = (String) resourceDetails.get("format");
+
+            // Format is required for privateDownload - throw exception if missing
+            if (format == null || format.isEmpty()) {
+                log.error("Resource format is missing for privateDownload: publicId={}, resourceType={}", publicId,
+                        resourceType);
+                throw new StorageException(
+                        "Cannot generate signed download URL: resource format is missing for publicId: " + publicId);
+            }
+
+            // Calculate expiration time in seconds (UNIX timestamp)
+            long expirationTime = System.currentTimeMillis() / 1000L + expirationSeconds;
+
+            // Generate private download URL with expiration using SDK 2.0 API
+            @SuppressWarnings("unchecked")
+            Map<String, Object> expiresOptions = ObjectUtils.asMap("expires_at", expirationTime);
+            String signedUrl = cloudinary.privateDownload(publicId, format, expiresOptions);
+
+            log.info(
+                    "Generated signed download URL with enforced expiration: publicId={}, format={}, resourceType={}, expiresIn={} minutes (expires_at={})",
+                    publicId, format, resourceType, expirationMinutes, expirationTime);
+            return signedUrl;
+        } catch (StorageException e) {
+            // Re-throw StorageException as-is
+            throw e;
+        } catch (Exception e) {
+            log.error(
+                    "Failed to generate signed download URL: publicId={}, expirationMinutes={}, resourceType={}, error={}",
+                    publicId, expirationMinutes, resourceType, e.getMessage(), e);
+            throw new StorageException("Failed to generate signed download URL", e);
+        }
+    }
+
+    @Override
+    public Map<String, Object> getResourceDetails(String publicId) {
+        return getResourceDetails(publicId, null);
+    }
+
+    @Override
+    public Map<String, Object> getResourceDetails(String publicId, String resourceType) {
+        try {
+            // If resourceType is provided, use it directly
+            if (resourceType != null && !resourceType.isEmpty() && !resourceType.equals("auto")) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> resource = (Map<String, Object>) cloudinary.api().resource(publicId,
+                        ObjectUtils.asMap("resource_type", resourceType));
+                log.debug("Resource found with specified resource_type: publicId={}, resourceType={}", publicId,
+                        resourceType);
+                return resource;
+            }
+
+            // If resourceType is not provided or is "auto", iterate over resource types
+            // Try common resource types: image, video, raw (auto is not valid for Admin
+            // API)
+            String[] resourceTypes = { "image", "video", "raw" };
+            Exception lastException = null;
+
+            for (String type : resourceTypes) {
+                try {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> resource = (Map<String, Object>) cloudinary.api().resource(publicId,
+                            ObjectUtils.asMap("resource_type", type));
+                    log.debug("Resource found by iterating resource types: publicId={}, resourceType={}", publicId,
+                            type);
+                    return resource;
+                } catch (Exception e) {
+                    // If it's a "not found" error, try the next resource type
+                    if (e.getMessage() != null && e.getMessage().contains("not found")) {
+                        lastException = e;
+                        continue;
+                    }
+                    // For other errors, log and rethrow
+                    log.error("Error getting resource details with resource_type={}: publicId={}, error={}",
+                            type, publicId, e.getMessage(), e);
+                    throw new StorageException("Failed to get resource details from Cloudinary", e);
+                }
+            }
+
+            // If we get here, all resource types returned "not found"
+            if (lastException != null) {
+                log.error("Resource not found in Cloudinary for any resource type: publicId={}", publicId);
+                throw new StorageException("Resource not found in Cloudinary: " + publicId, lastException);
+            }
+
+            // Fallback (should not reach here)
+            log.error("Unexpected error: failed to get resource details: publicId={}", publicId);
+            throw new StorageException("Failed to get resource details from Cloudinary: " + publicId);
+        } catch (StorageException e) {
+            // Re-throw StorageException as-is
+            throw e;
+        } catch (Exception e) {
+            log.error("Error getting resource details: publicId={}, resourceType={}, error={}",
+                    publicId, resourceType, e.getMessage(), e);
             throw new StorageException("Failed to get resource details from Cloudinary", e);
         }
     }
@@ -225,6 +423,103 @@ public class CloudinaryStorageService implements StorageService {
         // Additional validation can be added here (file type, extension, etc.)
     }
 
+    @Override
+    public Map<String, Object> moveFile(String currentPublicId, String newFolderPath) {
+        return moveFile(currentPublicId, newFolderPath, null);
+    }
+
+    @Override
+    public Map<String, Object> moveFile(String currentPublicId, String newFolderPath, String resourceType) {
+        try {
+            // Extract only the filename/UUID segment from currentPublicId (substring after
+            // last '/')
+            String filename;
+            int lastSlashIndex = currentPublicId.lastIndexOf('/');
+            if (lastSlashIndex >= 0 && lastSlashIndex < currentPublicId.length() - 1) {
+                filename = currentPublicId.substring(lastSlashIndex + 1);
+            } else {
+                filename = currentPublicId;
+            }
+
+            // Construct the new public ID with the new folder path
+            String newPublicId;
+            if (newFolderPath != null && !newFolderPath.isEmpty()) {
+                // Remove leading slash if present and normalize
+                String normalizedFolder = newFolderPath.startsWith("/")
+                        ? newFolderPath.substring(1)
+                        : newFolderPath;
+                // Remove trailing slash if present
+                normalizedFolder = normalizedFolder.endsWith("/")
+                        ? normalizedFolder.substring(0, normalizedFolder.length() - 1)
+                        : normalizedFolder;
+                newPublicId = normalizedFolder + "/" + filename;
+            } else {
+                // Move to root folder - just use the filename without folder
+                newPublicId = filename;
+            }
+
+            // Determine the actual resource type if not provided
+            // Cloudinary rename API requires a valid resource_type: image, raw, or video
+            // (not "auto")
+            String actualResourceType = resourceType;
+            if (actualResourceType == null || actualResourceType.isEmpty() || actualResourceType.equals("auto")) {
+                // Get resource details to determine the actual resource type
+                Map<String, Object> currentResourceDetails = getResourceDetails(currentPublicId, null);
+                actualResourceType = (String) currentResourceDetails.get("resource_type");
+
+                // Handle "auto" or missing resource_type by inferring from format
+                if (actualResourceType == null || actualResourceType.isEmpty() || actualResourceType.equals("auto")) {
+                    String format = (String) currentResourceDetails.get("format");
+                    if (format != null && !format.isEmpty()) {
+                        actualResourceType = inferResourceTypeFromFormat(format);
+                        log.info(
+                                "Inferred resource_type from format for rename: currentPublicId={}, format={}, resourceType={}",
+                                currentPublicId, format, actualResourceType);
+                    } else {
+                        // If format is also missing, throw exception
+                        log.error(
+                                "Cannot determine resource type for rename: resource_type is 'auto' and format is missing: publicId={}",
+                                currentPublicId);
+                        throw new StorageException(
+                                "Cannot determine resource type for rename: resource_type is 'auto' and format is missing for publicId: "
+                                        + currentPublicId);
+                    }
+                }
+            }
+
+            // Use Cloudinary rename API to move the file
+            // Note: rename API only accepts: image, raw, or video (not "auto")
+            Map<String, Object> renameOptions = new HashMap<>();
+            renameOptions.put("resource_type", actualResourceType);
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> result = cloudinary.uploader().rename(currentPublicId, newPublicId, renameOptions);
+
+            String resultValue = result.get("result") != null ? result.get("result").toString() : "";
+            if (!"ok".equals(resultValue)) {
+                log.error(
+                        "Failed to move file in Cloudinary: currentPublicId={}, newPublicId={}, resourceType={}, result={}",
+                        currentPublicId, newPublicId, actualResourceType, resultValue);
+                throw new StorageException("Failed to move file in Cloudinary: " + resultValue);
+            }
+
+            // Get updated resource details with new URLs, using the determined resourceType
+            Map<String, Object> resourceDetails = getResourceDetails(newPublicId, actualResourceType);
+
+            log.info("File moved successfully in Cloudinary: currentPublicId={}, newPublicId={}, resourceType={}",
+                    currentPublicId, newPublicId, actualResourceType);
+
+            return resourceDetails;
+        } catch (StorageException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error(
+                    "Error moving file in Cloudinary: currentPublicId={}, newFolderPath={}, resourceType={}, error={}",
+                    currentPublicId, newFolderPath, resourceType, e.getMessage(), e);
+            throw new StorageException("Failed to move file in Cloudinary", e);
+        }
+    }
+
     /**
      * Extract file extension from filename
      */
@@ -240,15 +535,38 @@ public class CloudinaryStorageService implements StorageService {
     }
 
     /**
-     * Custom exception for storage operations
+     * Infer resource_type from format (file extension)
+     * 
+     * @param format File format/extension (e.g., "jpg", "png", "mp4", "pdf")
+     * @return Inferred resource_type: "image", "video", or "raw"
      */
-    public static class StorageException extends RuntimeException {
-        public StorageException(String message) {
-            super(message);
+    private String inferResourceTypeFromFormat(String format) {
+        if (format == null || format.isEmpty()) {
+            return "raw";
         }
 
-        public StorageException(String message, Throwable cause) {
-            super(message, cause);
+        String lowerFormat = format.toLowerCase();
+
+        // Image formats
+        String[] imageFormats = { "jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "ico", "tiff", "tif", "heic",
+                "heif" };
+        for (String imgFormat : imageFormats) {
+            if (lowerFormat.equals(imgFormat)) {
+                return "image";
+            }
         }
+
+        // Video formats
+        String[] videoFormats = { "mp4", "mov", "avi", "mkv", "webm", "flv", "wmv", "m4v", "3gp", "ogv", "mpg",
+                "mpeg" };
+        for (String vidFormat : videoFormats) {
+            if (lowerFormat.equals(vidFormat)) {
+                return "video";
+            }
+        }
+
+        // Default to "raw" for other formats (PDF, documents, etc.)
+        return "raw";
     }
+
 }

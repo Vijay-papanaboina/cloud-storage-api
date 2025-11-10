@@ -7,6 +7,9 @@ public class BulkUploadResponse {
     private String jobType;
     private String status;
     private Integer totalItems;
+    private Integer processedItems;
+    private Integer failedItems;
+    private Integer progress;
     private String message;
     private String statusUrl;
 
@@ -20,6 +23,19 @@ public class BulkUploadResponse {
         this.jobType = jobType;
         this.status = status;
         this.totalItems = totalItems;
+        this.message = message;
+        this.statusUrl = statusUrl;
+    }
+
+    public BulkUploadResponse(UUID batchId, String jobType, String status, Integer totalItems, Integer processedItems,
+            Integer failedItems, Integer progress, String message, String statusUrl) {
+        this.batchId = batchId;
+        this.jobType = jobType;
+        this.status = status;
+        this.totalItems = totalItems;
+        this.processedItems = processedItems;
+        this.failedItems = failedItems;
+        this.progress = progress;
         this.message = message;
         this.statusUrl = statusUrl;
     }
@@ -71,5 +87,29 @@ public class BulkUploadResponse {
 
     public void setStatusUrl(String statusUrl) {
         this.statusUrl = statusUrl;
+    }
+
+    public Integer getProcessedItems() {
+        return processedItems;
+    }
+
+    public void setProcessedItems(Integer processedItems) {
+        this.processedItems = processedItems;
+    }
+
+    public Integer getFailedItems() {
+        return failedItems;
+    }
+
+    public void setFailedItems(Integer failedItems) {
+        this.failedItems = failedItems;
+    }
+
+    public Integer getProgress() {
+        return progress;
+    }
+
+    public void setProgress(Integer progress) {
+        this.progress = progress;
     }
 }

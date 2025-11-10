@@ -9,6 +9,7 @@ public class ErrorResponse {
     private String error;
     private String message;
     private String path;
+    private String errorCode;
     private List<ValidationErrorResponse> details;
 
     // Constructors
@@ -24,14 +25,68 @@ public class ErrorResponse {
         this.path = path;
     }
 
-    public ErrorResponse(Integer status, String error, String message, String path,
-            List<ValidationErrorResponse> details) {
-        this.timestamp = Instant.now();
-        this.status = status;
-        this.error = error;
-        this.message = message;
-        this.path = path;
-        this.details = details;
+    // Builder pattern to avoid constructor ambiguity
+    public static Builder builder() {
+        return new Builder();
+    }
+
+    public static class Builder {
+        private Instant timestamp;
+        private Integer status;
+        private String error;
+        private String message;
+        private String path;
+        private String errorCode;
+        private List<ValidationErrorResponse> details;
+
+        public Builder timestamp(Instant timestamp) {
+            this.timestamp = timestamp;
+            return this;
+        }
+
+        public Builder status(Integer status) {
+            this.status = status;
+            return this;
+        }
+
+        public Builder error(String error) {
+            this.error = error;
+            return this;
+        }
+
+        public Builder message(String message) {
+            this.message = message;
+            return this;
+        }
+
+        public Builder path(String path) {
+            this.path = path;
+            return this;
+        }
+
+        public Builder errorCode(String errorCode) {
+            this.errorCode = errorCode;
+            return this;
+        }
+
+        public Builder details(List<ValidationErrorResponse> details) {
+            this.details = details;
+            return this;
+        }
+
+        public ErrorResponse build() {
+            ErrorResponse response = new ErrorResponse();
+            // Set timestamp to current time if not explicitly set, ensuring it reflects
+            // actual build time
+            response.timestamp = (this.timestamp != null) ? this.timestamp : Instant.now();
+            response.status = this.status;
+            response.error = this.error;
+            response.message = this.message;
+            response.path = this.path;
+            response.errorCode = this.errorCode;
+            response.details = this.details;
+            return response;
+        }
     }
 
     // Getters and Setters
@@ -81,5 +136,13 @@ public class ErrorResponse {
 
     public void setDetails(List<ValidationErrorResponse> details) {
         this.details = details;
+    }
+
+    public String getErrorCode() {
+        return errorCode;
+    }
+
+    public void setErrorCode(String errorCode) {
+        this.errorCode = errorCode;
     }
 }

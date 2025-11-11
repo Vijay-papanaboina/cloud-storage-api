@@ -371,10 +371,8 @@ class FolderServiceImplTest {
     }
 
     @Test
-    void getFolderStatistics_EmptyFolder_ReturnsZeroStatistics() {
-        // Given - Folder exists but is empty (has 0 files)
-        // Note: The implementation throws ResourceNotFoundException when fileCount == 0
-        // This test verifies that behavior
+    void getFolderStatistics_EmptyFolder_ThrowsResourceNotFoundException() {
+        // Given - Empty folder (fileCount == 0)
         long fileCount = 0L;
 
         when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));

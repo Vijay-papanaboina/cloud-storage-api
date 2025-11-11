@@ -11,7 +11,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 
@@ -210,9 +212,35 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
     }
 
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<ErrorResponse> handleMissingServletRequestParameter(
+            MissingServletRequestParameterException ex, HttpServletRequest request) {
+        log.warn("Missing request parameter: {}", ex.getMessage());
+        ErrorResponse error = new ErrorResponse();
+        error.setTimestamp(Instant.now());
+        error.setStatus(HttpStatus.BAD_REQUEST.value());
+        error.setError("Bad Request");
+        error.setMessage("Required parameter '" + ex.getParameterName() + "' is missing");
+        error.setPath(request.getRequestURI());
+        error.setErrorCode("MISSING_PARAMETER");
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+    }
+
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<ErrorResponse> handleResponseStatusException(
+            ResponseStatusException ex, HttpServletRequest request) {
+        // Re-throw ResponseStatusException to let Spring handle it properly
+        // This ensures the correct HTTP status code is returned
+        throw ex;
+    }
+
     @ExceptionHandler(RuntimeException.class)
     public ResponseEntity<ErrorResponse> handleRuntimeException(
             RuntimeException ex, HttpServletRequest request) {
+        // Skip ResponseStatusException - it should be handled by Spring
+        if (ex instanceof ResponseStatusException) {
+            throw (ResponseStatusException) ex;
+        }
         log.error("Runtime exception occurred", ex);
         ErrorResponse error = new ErrorResponse();
         error.setTimestamp(Instant.now());

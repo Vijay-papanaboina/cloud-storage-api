@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import github.vijay_papanaboina.cloud_storage_api.dto.*;
 import github.vijay_papanaboina.cloud_storage_api.exception.BadRequestException;
 import github.vijay_papanaboina.cloud_storage_api.exception.ResourceNotFoundException;
+import github.vijay_papanaboina.cloud_storage_api.security.JwtTokenProvider;
 import github.vijay_papanaboina.cloud_storage_api.security.SecurityUtils;
 import github.vijay_papanaboina.cloud_storage_api.service.FolderService;
 import org.junit.jupiter.api.BeforeEach;
@@ -12,6 +13,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.security.servlet.SecurityAutoConfiguration;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
@@ -31,7 +33,7 @@ import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-@WebMvcTest(FolderController.class)
+@WebMvcTest(controllers = FolderController.class, excludeAutoConfiguration = SecurityAutoConfiguration.class)
 @ExtendWith(MockitoExtension.class)
 class FolderControllerTest {
 
@@ -43,6 +45,9 @@ class FolderControllerTest {
 
     @MockBean
     private FolderService folderService;
+
+    @MockBean
+    private JwtTokenProvider jwtTokenProvider;
 
     private UUID userId;
     private String folderPath;
@@ -101,23 +106,21 @@ class FolderControllerTest {
     @Test
     @WithMockUser
     void createFolder_InvalidPath_Returns400() throws Exception {
-        // Given
+        // Given - Path doesn't start with '/' - will fail DTO validation
+        // (@SafeFolderPath)
         FolderCreateRequest request = new FolderCreateRequest("invalid-path", "Test description");
-        FolderPathValidationResult validationResult = new FolderPathValidationResult(
-                "invalid-path", false, false, "Path must start with '/'", 0L);
 
         try (MockedStatic<SecurityUtils> securityUtilsMock = mockStatic(SecurityUtils.class)) {
             securityUtilsMock.when(SecurityUtils::getAuthenticatedUserId).thenReturn(userId);
-            when(folderService.validateFolderPath(any(FolderPathValidationRequest.class), eq(userId)))
-                    .thenReturn(validationResult);
 
-            // When/Then
+            // When/Then - DTO validation fails before controller method is called
             mockMvc.perform(post("/api/folders")
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(objectMapper.writeValueAsString(request)))
                     .andExpect(status().isBadRequest());
 
-            verify(folderService, times(1)).validateFolderPath(any(FolderPathValidationRequest.class), eq(userId));
+            // Service method should not be called because DTO validation fails first
+            verify(folderService, never()).validateFolderPath(any(), any());
         }
     }
 
@@ -147,16 +150,22 @@ class FolderControllerTest {
     @Test
     @WithMockUser
     void createFolder_PathTraversal_Returns400() throws Exception {
-        // Given
-        FolderCreateRequest request = new FolderCreateRequest("/photos/../etc", "Test description");
+        // Given - Path that will fail validation (contains invalid characters or
+        // escapes root)
+        // Using a path that, after normalization attempts, would escape root: /../etc
+        FolderCreateRequest request = new FolderCreateRequest("/../etc", "Test description");
 
-        // When/Then - SafeFolderPath validator should reject this
-        mockMvc.perform(post("/api/folders")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isBadRequest());
+        try (MockedStatic<SecurityUtils> securityUtilsMock = mockStatic(SecurityUtils.class)) {
+            securityUtilsMock.when(SecurityUtils::getAuthenticatedUserId).thenReturn(userId);
 
-        verify(folderService, never()).validateFolderPath(any(), any());
+            // When/Then - SafeFolderPath validator should reject this
+            mockMvc.perform(post("/api/folders")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isBadRequest());
+
+            verify(folderService, never()).validateFolderPath(any(), any());
+        }
     }
 
     @Test
@@ -285,22 +294,30 @@ class FolderControllerTest {
     @Test
     @WithMockUser
     void getFolderStatistics_MissingPath_Returns400() throws Exception {
-        // When/Then
-        mockMvc.perform(get("/api/folders/statistics"))
-                .andExpect(status().isBadRequest());
+        try (MockedStatic<SecurityUtils> securityUtilsMock = mockStatic(SecurityUtils.class)) {
+            securityUtilsMock.when(SecurityUtils::getAuthenticatedUserId).thenReturn(userId);
 
-        verify(folderService, never()).getFolderStatistics(any(), any());
+            // When/Then
+            mockMvc.perform(get("/api/folders/statistics"))
+                    .andExpect(status().isBadRequest());
+
+            verify(folderService, never()).getFolderStatistics(any(), any());
+        }
     }
 
     @Test
     @WithMockUser
     void getFolderStatistics_EmptyPath_Returns400() throws Exception {
-        // When/Then
-        mockMvc.perform(get("/api/folders/statistics")
-                .param("path", ""))
-                .andExpect(status().isBadRequest());
+        try (MockedStatic<SecurityUtils> securityUtilsMock = mockStatic(SecurityUtils.class)) {
+            securityUtilsMock.when(SecurityUtils::getAuthenticatedUserId).thenReturn(userId);
 
-        verify(folderService, never()).getFolderStatistics(any(), any());
+            // When/Then
+            mockMvc.perform(get("/api/folders/statistics")
+                    .param("path", ""))
+                    .andExpect(status().isBadRequest());
+
+            verify(folderService, never()).getFolderStatistics(any(), any());
+        }
     }
 
     @Test
@@ -389,22 +406,30 @@ class FolderControllerTest {
     @Test
     @WithMockUser
     void deleteFolder_MissingPath_Returns400() throws Exception {
-        // When/Then
-        mockMvc.perform(delete("/api/folders"))
-                .andExpect(status().isBadRequest());
+        try (MockedStatic<SecurityUtils> securityUtilsMock = mockStatic(SecurityUtils.class)) {
+            securityUtilsMock.when(SecurityUtils::getAuthenticatedUserId).thenReturn(userId);
 
-        verify(folderService, never()).deleteFolder(any(), any());
+            // When/Then
+            mockMvc.perform(delete("/api/folders"))
+                    .andExpect(status().isBadRequest());
+
+            verify(folderService, never()).deleteFolder(any(), any());
+        }
     }
 
     @Test
     @WithMockUser
     void deleteFolder_EmptyPath_Returns400() throws Exception {
-        // When/Then
-        mockMvc.perform(delete("/api/folders")
-                .param("path", ""))
-                .andExpect(status().isBadRequest());
+        try (MockedStatic<SecurityUtils> securityUtilsMock = mockStatic(SecurityUtils.class)) {
+            securityUtilsMock.when(SecurityUtils::getAuthenticatedUserId).thenReturn(userId);
 
-        verify(folderService, never()).deleteFolder(any(), any());
+            // When/Then
+            mockMvc.perform(delete("/api/folders")
+                    .param("path", ""))
+                    .andExpect(status().isBadRequest());
+
+            verify(folderService, never()).deleteFolder(any(), any());
+        }
     }
 
     @Test

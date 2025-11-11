@@ -219,6 +219,10 @@ public class FileServiceImpl implements FileService {
     public FileResponse getById(UUID id, UUID userId) {
         log.info("Getting file by ID: fileId={}, userId={}", id, userId);
 
+        if (userId == null) {
+            throw new IllegalArgumentException("User ID cannot be null");
+        }
+
         File file = fileRepository.findByIdAndUserId(id, userId)
                 .orElseThrow(() -> new CloudFileNotFoundException(id));
 

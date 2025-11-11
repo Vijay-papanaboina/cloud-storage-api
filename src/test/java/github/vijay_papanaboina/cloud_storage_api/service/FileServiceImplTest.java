@@ -387,16 +387,14 @@ class FileServiceImplTest {
     }
 
     @Test
-    void getById_NullUserId_ThrowsNullPointerException() {
-        // Given - Mock repository to throw NPE when null userId is passed
-        when(fileRepository.findByIdAndUserId(fileId, null))
-                .thenThrow(new NullPointerException("User ID cannot be null"));
-
+    void getById_NullUserId_ThrowsIllegalArgumentException() {
         // When/Then
         assertThatThrownBy(() -> fileService.getById(fileId, null))
-                .isInstanceOf(NullPointerException.class);
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("User ID cannot be null");
 
-        verify(fileRepository, times(1)).findByIdAndUserId(fileId, null);
+        // Verify repository is not invoked for null userId
+        verify(fileRepository, never()).findByIdAndUserId(any(), any());
     }
 
     // list tests

@@ -44,13 +44,17 @@ public class FolderStatisticsResponse {
      * @throws IllegalArgumentException if the map contains null keys or values
      */
     private static Map<String, Long> validateAndCopyMap(Map<String, Long> map, String mapName) {
-        if (map.containsKey(null)) {
-            throw new IllegalArgumentException(
-                    String.format("%s must not contain null keys", mapName));
-        }
-        if (map.containsValue(null)) {
-            throw new IllegalArgumentException(
-                    String.format("%s must not contain null values", mapName));
+        // Check for null keys and values by iterating entries (safer than
+        // containsKey(null))
+        for (Map.Entry<String, Long> entry : map.entrySet()) {
+            if (entry.getKey() == null) {
+                throw new IllegalArgumentException(
+                        String.format("%s must not contain null keys", mapName));
+            }
+            if (entry.getValue() == null) {
+                throw new IllegalArgumentException(
+                        String.format("%s must not contain null values", mapName));
+            }
         }
         return Map.copyOf(map);
     }

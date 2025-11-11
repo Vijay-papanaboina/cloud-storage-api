@@ -5,6 +5,7 @@ import github.vijay_papanaboina.cloud_storage_api.dto.*;
 import github.vijay_papanaboina.cloud_storage_api.exception.ConflictException;
 import github.vijay_papanaboina.cloud_storage_api.exception.ResourceNotFoundException;
 import github.vijay_papanaboina.cloud_storage_api.exception.UnauthorizedException;
+import github.vijay_papanaboina.cloud_storage_api.security.JwtTokenProvider;
 import github.vijay_papanaboina.cloud_storage_api.security.SecurityUtils;
 import github.vijay_papanaboina.cloud_storage_api.service.ApiKeyService;
 import github.vijay_papanaboina.cloud_storage_api.service.AuthService;
@@ -14,6 +15,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.security.servlet.SecurityAutoConfiguration;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
@@ -31,7 +33,7 @@ import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-@WebMvcTest(AuthController.class)
+@WebMvcTest(controllers = AuthController.class, excludeAutoConfiguration = SecurityAutoConfiguration.class)
 @ExtendWith(MockitoExtension.class)
 class AuthControllerTest {
 
@@ -46,6 +48,9 @@ class AuthControllerTest {
 
     @MockBean
     private ApiKeyService apiKeyService;
+
+    @MockBean
+    private JwtTokenProvider jwtTokenProvider;
 
     private UUID userId;
     private String username;

@@ -18,7 +18,6 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -54,7 +53,8 @@ class FileIntegrationTest extends BaseIntegrationTest {
                 cloudinaryResponse.put("secure_url", "https://res.cloudinary.com/test/image/upload/test.jpg");
                 cloudinaryResponse.put("bytes", 1024L);
 
-                when(storageService.uploadFile(any(), isNull(), any())).thenReturn(cloudinaryResponse);
+                when(storageService.uploadFile(any(), eq(user.getId().toString()), any()))
+                                .thenReturn(cloudinaryResponse);
 
                 // When
                 MvcResult result = mockMvc.perform(multipart("/api/files/upload")
@@ -126,13 +126,16 @@ class FileIntegrationTest extends BaseIntegrationTest {
                 // Mock storage service calls for folder move
                 Map<String, Object> resourceDetails = new HashMap<>();
                 resourceDetails.put("resource_type", "raw");
-                when(storageService.getResourceDetails(any(String.class))).thenReturn(resourceDetails);
+                // File has no folderPath (null), so expected path is userId/publicId
+                String currentFullPath = user.getId() + "/" + file.getCloudinaryPublicId();
+                String newCloudinaryPath = user.getId() + "/documents";
+                when(storageService.getResourceDetails(eq(currentFullPath))).thenReturn(resourceDetails);
 
                 Map<String, Object> moveResult = new HashMap<>();
                 moveResult.put("public_id", file.getCloudinaryPublicId());
                 moveResult.put("url", "https://res.cloudinary.com/test/image/upload/test.jpg");
                 moveResult.put("secure_url", "https://res.cloudinary.com/test/image/upload/test.jpg");
-                when(storageService.moveFile(any(String.class), eq("/documents"), any(String.class)))
+                when(storageService.moveFile(eq(currentFullPath), eq(newCloudinaryPath), any(String.class)))
                                 .thenReturn(moveResult);
 
                 // When
@@ -219,7 +222,9 @@ class FileIntegrationTest extends BaseIntegrationTest {
                 cloudinaryResponse.put("secure_url", "https://res.cloudinary.com/test/image/upload/test.jpg");
                 cloudinaryResponse.put("bytes", 1024L);
 
-                when(storageService.uploadFile(any(), eq("/documents"), any())).thenReturn(cloudinaryResponse);
+                String expectedCloudinaryPath = user.getId() + "/documents";
+                when(storageService.uploadFile(any(), eq(expectedCloudinaryPath), any()))
+                                .thenReturn(cloudinaryResponse);
 
                 // When & Then - valid folder path
                 mockMvc.perform(multipart("/api/files/upload")

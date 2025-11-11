@@ -63,11 +63,15 @@ public class FileServiceImpl implements FileService {
         // Validate folder path format
         validateFolderPath(normalizedFolderPath);
 
+        // Construct Cloudinary folder path with userId prefix for user isolation
+        // Format: {userId}/{userFolderPath} or {userId} for root
+        String cloudinaryFolderPath = constructCloudinaryFolderPath(userId, normalizedFolderPath);
+
         // Upload to Cloudinary with error handling
         Map<String, Object> uploadOptions = new HashMap<>();
         Map<String, Object> cloudinaryResult;
         try {
-            cloudinaryResult = storageService.uploadFile(file, normalizedFolderPath, uploadOptions);
+            cloudinaryResult = storageService.uploadFile(file, cloudinaryFolderPath, uploadOptions);
         } catch (StorageException e) {
             // Re-throw StorageException as-is
             throw e;
@@ -84,16 +88,21 @@ public class FileServiceImpl implements FileService {
         }
 
         // Extract Cloudinary response
-        String publicId = (String) cloudinaryResult.get("public_id");
+        String fullPublicId = (String) cloudinaryResult.get("public_id");
         String cloudinaryUrl = (String) cloudinaryResult.get("url");
         String cloudinarySecureUrl = (String) cloudinaryResult.get("secure_url");
 
         // Validate required fields
-        if (publicId == null || publicId.isEmpty()) {
+        if (fullPublicId == null || fullPublicId.isEmpty()) {
             log.error("Cloudinary response missing public_id: userId={}, filename={}", userId,
                     file.getOriginalFilename());
             throw new StorageException("Storage service returned invalid response: missing public_id");
         }
+
+        // Extract UUID from full public ID (remove userId and folder path prefix)
+        // Cloudinary returns: {userId}/{folderPath}/{uuid}, we need just the UUID for
+        // database
+        String uuid = extractUuidFromPublicId(fullPublicId);
 
         // Generate unique filename (UUID with extension)
         String originalFilename = file.getOriginalFilename();
@@ -102,15 +111,16 @@ public class FileServiceImpl implements FileService {
 
         // Create File entity
         File fileEntity = new File(filename, file.getContentType(), file.getSize(), user);
-        fileEntity.setFolderPath(normalizedFolderPath);
-        fileEntity.setCloudinaryPublicId(publicId);
+        fileEntity.setFolderPath(normalizedFolderPath); // Store user's original path (without userId prefix)
+        fileEntity.setCloudinaryPublicId(uuid); // Store only UUID (userId prefix is added when needed)
         fileEntity.setCloudinaryUrl(cloudinaryUrl);
         fileEntity.setCloudinarySecureUrl(cloudinarySecureUrl);
         fileEntity.setCreatedAt(Instant.now());
 
         // Save to database
         File savedFile = fileRepository.save(fileEntity);
-        log.info("File uploaded successfully: fileId={}, publicId={}", savedFile.getId(), publicId);
+        log.info("File uploaded successfully: fileId={}, userId={}, cloudinaryPath={}, uuid={}",
+                savedFile.getId(), userId, fullPublicId, uuid);
 
         return toFileResponse(savedFile);
     }
@@ -124,10 +134,13 @@ public class FileServiceImpl implements FileService {
         File file = fileRepository.findByIdAndUserId(id, userId)
                 .orElseThrow(() -> new ResourceNotFoundException("File with ID " + id + " not found", id));
 
+        // Reconstruct full Cloudinary public ID with userId prefix
+        String fullPublicId = constructCloudinaryPublicId(userId, file.getFolderPath(), file.getCloudinaryPublicId());
+
         // Download from Cloudinary with error handling
         byte[] fileBytes;
         try {
-            fileBytes = storageService.downloadFile(file.getCloudinaryPublicId());
+            fileBytes = storageService.downloadFile(fullPublicId);
         } catch (StorageException e) {
             // Re-throw StorageException as-is
             throw e;
@@ -163,10 +176,13 @@ public class FileServiceImpl implements FileService {
         File file = fileRepository.findByIdAndUserId(id, userId)
                 .orElseThrow(() -> new CloudFileNotFoundException(id));
 
+        // Reconstruct full Cloudinary public ID with userId prefix
+        String fullPublicId = constructCloudinaryPublicId(userId, file.getFolderPath(), file.getCloudinaryPublicId());
+
         // Get resource details from Cloudinary to extract format and resource type
         Map<String, Object> resourceDetails;
         try {
-            resourceDetails = storageService.getResourceDetails(file.getCloudinaryPublicId());
+            resourceDetails = storageService.getResourceDetails(fullPublicId);
         } catch (StorageException e) {
             // Re-throw StorageException as-is
             throw e;
@@ -189,7 +205,7 @@ public class FileServiceImpl implements FileService {
         // found" errors
         String signedUrl;
         try {
-            signedUrl = storageService.generateSignedDownloadUrl(file.getCloudinaryPublicId(), expirationMinutes,
+            signedUrl = storageService.generateSignedDownloadUrl(fullPublicId, expirationMinutes,
                     resourceType);
         } catch (StorageException e) {
             // Re-throw StorageException as-is
@@ -205,7 +221,7 @@ public class FileServiceImpl implements FileService {
 
         FileUrlResponse response = new FileUrlResponse();
         response.setUrl(signedUrl);
-        response.setPublicId(file.getCloudinaryPublicId());
+        response.setPublicId(file.getCloudinaryPublicId()); // Return only UUID to user (not full path)
         response.setFormat(format);
         response.setResourceType(resourceType);
         response.setExpiresAt(expiresAt);
@@ -299,9 +315,9 @@ public class FileServiceImpl implements FileService {
             // Validate new folder path
             validateFolderPath(newFolderPath);
             try {
-                // Construct current full public ID (including folder path if exists)
-                String currentPublicId = file.getCloudinaryPublicId();
-                String currentFullPublicId = constructFullPublicId(currentPublicId, oldFolderPath);
+                // Construct current full Cloudinary public ID with userId prefix
+                String currentFullPublicId = constructCloudinaryPublicId(userId, oldFolderPath,
+                        file.getCloudinaryPublicId());
 
                 // Get resource type to pass to moveFile to avoid "not found" errors
                 String resourceType = null;
@@ -313,25 +329,30 @@ public class FileServiceImpl implements FileService {
                             id, e.getMessage());
                 }
 
+                // Construct new Cloudinary folder path with userId prefix
+                String newCloudinaryFolderPath = constructCloudinaryFolderPath(userId, newFolderPath);
+
                 // Move file in Cloudinary to new folder, passing resourceType if available
-                Map<String, Object> moveResult = storageService.moveFile(currentFullPublicId, newFolderPath,
+                Map<String, Object> moveResult = storageService.moveFile(currentFullPublicId, newCloudinaryFolderPath,
                         resourceType);
 
                 // Extract updated public ID and URLs from Cloudinary response
-                String newPublicId = (String) moveResult.get("public_id");
+                String newFullPublicId = (String) moveResult.get("public_id");
                 String newCloudinaryUrl = (String) moveResult.get("url");
                 String newCloudinarySecureUrl = (String) moveResult.get("secure_url");
 
                 // Update file metadata
-                // Extract just the UUID part from the new public_id (remove folder path)
-                String uuidPart = extractUuidFromPublicId(newPublicId);
-                file.setCloudinaryPublicId(uuidPart != null ? uuidPart : newPublicId);
+                // Extract just the UUID part from the new public_id (remove userId and folder
+                // path)
+                String uuidPart = extractUuidFromPublicId(newFullPublicId);
+                file.setCloudinaryPublicId(uuidPart != null ? uuidPart : newFullPublicId);
                 file.setCloudinaryUrl(newCloudinaryUrl);
                 file.setCloudinarySecureUrl(newCloudinarySecureUrl);
-                file.setFolderPath(newFolderPath);
+                file.setFolderPath(newFolderPath); // Store user's original path (without userId prefix)
 
-                log.info("File moved in Cloudinary: fileId={}, oldFolder={}, newFolder={}, newPublicId={}",
-                        id, oldFolderPath, newFolderPath, newPublicId);
+                log.info(
+                        "File moved in Cloudinary: fileId={}, userId={}, oldFolder={}, newFolder={}, newFullPublicId={}",
+                        id, userId, oldFolderPath, newFolderPath, newFullPublicId);
             } catch (Exception e) {
                 log.error("Failed to move file in Cloudinary: fileId={}, oldFolder={}, newFolder={}, error={}",
                         id, oldFolderPath, newFolderPath, e.getMessage(), e);
@@ -477,10 +498,13 @@ public class FileServiceImpl implements FileService {
         File file = fileRepository.findByIdAndUserId(id, userId)
                 .orElseThrow(() -> new CloudFileNotFoundException(id));
 
+        // Reconstruct full Cloudinary public ID with userId prefix
+        String fullPublicId = constructCloudinaryPublicId(userId, file.getFolderPath(), file.getCloudinaryPublicId());
+
         // Get resource details from Cloudinary to extract format and resource type
         Map<String, Object> resourceDetails;
         try {
-            resourceDetails = storageService.getResourceDetails(file.getCloudinaryPublicId());
+            resourceDetails = storageService.getResourceDetails(fullPublicId);
         } catch (StorageException e) {
             // Re-throw StorageException as-is
             throw e;
@@ -502,7 +526,7 @@ public class FileServiceImpl implements FileService {
         // Generate URL with error handling
         String url;
         try {
-            url = storageService.getFileUrl(file.getCloudinaryPublicId(), secure);
+            url = storageService.getFileUrl(fullPublicId, secure);
         } catch (StorageException e) {
             // Re-throw StorageException as-is
             throw e;
@@ -536,16 +560,19 @@ public class FileServiceImpl implements FileService {
         // Validate file type supports transformations
         validateFileTypeForTransformation(file.getContentType(), "transformations");
 
+        // Reconstruct full Cloudinary public ID with userId prefix
+        String fullPublicId = constructCloudinaryPublicId(userId, file.getFolderPath(), file.getCloudinaryPublicId());
+
         // Get original URL with error handling
         String originalUrl;
         try {
-            originalUrl = storageService.getFileUrl(file.getCloudinaryPublicId(), true);
+            originalUrl = storageService.getFileUrl(fullPublicId, true);
         } catch (StorageException e) {
             // Re-throw StorageException as-is
             throw e;
         } catch (Exception e) {
             log.error("Unexpected error getting original URL: fileId={}, publicId={}, error={}",
-                    id, file.getCloudinaryPublicId(), e.getMessage(), e);
+                    id, fullPublicId, e.getMessage(), e);
             throw new StorageException("Failed to get original URL: " + e.getMessage(), e);
         }
 
@@ -553,7 +580,7 @@ public class FileServiceImpl implements FileService {
         String transformedUrl;
         try {
             transformedUrl = storageService.getTransformUrl(
-                    file.getCloudinaryPublicId(),
+                    fullPublicId,
                     true,
                     request.getWidth(),
                     request.getHeight(),
@@ -599,16 +626,19 @@ public class FileServiceImpl implements FileService {
         // Validate file type supports transformations
         validateFileTypeForTransformation(file.getContentType(), "transformations");
 
+        // Reconstruct full Cloudinary public ID with userId prefix
+        String fullPublicId = constructCloudinaryPublicId(userId, file.getFolderPath(), file.getCloudinaryPublicId());
+
         // Get original URL with error handling
         String originalUrl;
         try {
-            originalUrl = storageService.getFileUrl(file.getCloudinaryPublicId(), true);
+            originalUrl = storageService.getFileUrl(fullPublicId, true);
         } catch (StorageException e) {
             // Re-throw StorageException as-is
             throw e;
         } catch (Exception e) {
             log.error("Unexpected error getting original URL: fileId={}, publicId={}, error={}",
-                    id, file.getCloudinaryPublicId(), e.getMessage(), e);
+                    id, fullPublicId, e.getMessage(), e);
             throw new StorageException("Failed to get original URL: " + e.getMessage(), e);
         }
 
@@ -616,7 +646,7 @@ public class FileServiceImpl implements FileService {
         String transformedUrl;
         try {
             transformedUrl = storageService.getTransformUrl(
-                    file.getCloudinaryPublicId(),
+                    fullPublicId,
                     true,
                     width,
                     height,
@@ -775,26 +805,77 @@ public class FileServiceImpl implements FileService {
     }
 
     /**
-     * Construct the full public ID including folder path for Cloudinary operations.
-     * In Cloudinary, when a file is uploaded with a folder, the public_id includes
-     * the folder path.
+     * Construct Cloudinary folder path with userId prefix for user isolation.
+     * Format: {userId}/{userFolderPath} or {userId} for root.
      *
-     * @param publicId   The base public ID (UUID)
-     * @param folderPath The folder path (may be null or empty for root folder)
-     * @return Full public ID with folder path (e.g., "photos/2024/uuid" or just
-     *         "uuid" for root)
+     * @param userId         The user ID (required for user isolation)
+     * @param userFolderPath The user's folder path (may be null or empty for root
+     *                       folder)
+     * @return Cloudinary folder path with userId prefix
      */
-    private String constructFullPublicId(String publicId, String folderPath) {
-        if (folderPath == null || folderPath.isEmpty() || folderPath.isBlank()) {
-            return publicId;
+    private String constructCloudinaryFolderPath(UUID userId, String userFolderPath) {
+        if (userId == null) {
+            throw new IllegalArgumentException("User ID cannot be null");
         }
-        // Remove leading slash if present
-        String normalizedFolder = folderPath.startsWith("/") ? folderPath.substring(1) : folderPath;
-        // Remove trailing slash if present
-        normalizedFolder = normalizedFolder.endsWith("/")
-                ? normalizedFolder.substring(0, normalizedFolder.length() - 1)
-                : normalizedFolder;
-        return normalizedFolder + "/" + publicId;
+
+        // Start with userId prefix
+        StringBuilder fullPath = new StringBuilder(userId.toString());
+
+        // Add folder path if provided
+        if (userFolderPath != null && !userFolderPath.isEmpty() && !userFolderPath.isBlank()) {
+            // Remove leading slash if present
+            String normalizedFolder = userFolderPath.startsWith("/") ? userFolderPath.substring(1) : userFolderPath;
+            // Remove trailing slash if present
+            normalizedFolder = normalizedFolder.endsWith("/")
+                    ? normalizedFolder.substring(0, normalizedFolder.length() - 1)
+                    : normalizedFolder;
+            if (!normalizedFolder.isEmpty()) {
+                fullPath.append("/").append(normalizedFolder);
+            }
+        }
+
+        return fullPath.toString();
+    }
+
+    /**
+     * Construct the full Cloudinary public ID with userId prefix and folder path.
+     * This ensures user isolation in Cloudinary storage.
+     * Format: {userId}/{userFolderPath}/{uuid} or {userId}/{uuid} for root.
+     *
+     * @param userId         The user ID (required for user isolation)
+     * @param userFolderPath The user's folder path (may be null or empty for root
+     *                       folder)
+     * @param uuid           The base public ID (UUID)
+     * @return Full public ID with userId prefix and folder path
+     */
+    private String constructCloudinaryPublicId(UUID userId, String userFolderPath, String uuid) {
+        if (userId == null) {
+            throw new IllegalArgumentException("User ID cannot be null");
+        }
+        if (uuid == null || uuid.isEmpty()) {
+            throw new IllegalArgumentException("UUID cannot be null or empty");
+        }
+
+        // Start with userId prefix
+        StringBuilder fullPath = new StringBuilder(userId.toString());
+
+        // Add folder path if provided
+        if (userFolderPath != null && !userFolderPath.isEmpty() && !userFolderPath.isBlank()) {
+            // Remove leading slash if present
+            String normalizedFolder = userFolderPath.startsWith("/") ? userFolderPath.substring(1) : userFolderPath;
+            // Remove trailing slash if present
+            normalizedFolder = normalizedFolder.endsWith("/")
+                    ? normalizedFolder.substring(0, normalizedFolder.length() - 1)
+                    : normalizedFolder;
+            if (!normalizedFolder.isEmpty()) {
+                fullPath.append("/").append(normalizedFolder);
+            }
+        }
+
+        // Add UUID
+        fullPath.append("/").append(uuid);
+
+        return fullPath.toString();
     }
 
     /**

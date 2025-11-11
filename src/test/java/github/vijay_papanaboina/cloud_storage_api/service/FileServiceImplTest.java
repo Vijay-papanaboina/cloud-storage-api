@@ -72,9 +72,11 @@ class FileServiceImplTest {
         // Given
         MultipartFile multipartFile = createTestMultipartFile("test.txt");
         Map<String, Object> cloudinaryResponse = createTestCloudinaryResponse("test-public-id");
+        String expectedCloudinaryPath = getExpectedCloudinaryFolderPath(null);
 
         when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
-        when(storageService.uploadFile(any(MultipartFile.class), isNull(), any())).thenReturn(cloudinaryResponse);
+        when(storageService.uploadFile(any(MultipartFile.class), eq(expectedCloudinaryPath), any()))
+                .thenReturn(cloudinaryResponse);
         when(fileRepository.save(any(File.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         // When
@@ -89,7 +91,7 @@ class FileServiceImplTest {
         assertThat(response.getCloudinarySecureUrl()).isNotNull();
 
         verify(userRepository, times(1)).findById(userId);
-        verify(storageService, times(1)).uploadFile(any(MultipartFile.class), isNull(), any());
+        verify(storageService, times(1)).uploadFile(any(MultipartFile.class), eq(expectedCloudinaryPath), any());
         verify(fileRepository, times(1)).save(any(File.class));
     }
 
@@ -98,9 +100,10 @@ class FileServiceImplTest {
         // Given
         MultipartFile multipartFile = createTestMultipartFile("test.txt");
         Map<String, Object> cloudinaryResponse = createTestCloudinaryResponse("test-public-id");
+        String expectedCloudinaryPath = getExpectedCloudinaryFolderPath(folderPath);
 
         when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
-        when(storageService.uploadFile(any(), eq(folderPath), any())).thenReturn(cloudinaryResponse);
+        when(storageService.uploadFile(any(), eq(expectedCloudinaryPath), any())).thenReturn(cloudinaryResponse);
         when(fileRepository.save(any(File.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         // When
@@ -111,7 +114,7 @@ class FileServiceImplTest {
         assertThat(response.getFolderPath()).isEqualTo(folderPath);
 
         verify(userRepository, times(1)).findById(userId);
-        verify(storageService, times(1)).uploadFile(any(), eq(folderPath), any());
+        verify(storageService, times(1)).uploadFile(any(), eq(expectedCloudinaryPath), any());
         verify(fileRepository, times(1)).save(any(File.class));
     }
 
@@ -206,9 +209,11 @@ class FileServiceImplTest {
     void download_Success_ReturnsResource() {
         // Given
         byte[] fileBytes = "Test file content".getBytes();
+        String expectedFullPath = getExpectedCloudinaryPublicId(testFile.getFolderPath(),
+                testFile.getCloudinaryPublicId());
 
         when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.of(testFile));
-        when(storageService.downloadFile(testFile.getCloudinaryPublicId())).thenReturn(fileBytes);
+        when(storageService.downloadFile(eq(expectedFullPath))).thenReturn(fileBytes);
 
         // When
         Resource resource = fileService.download(fileId, userId);
@@ -218,7 +223,7 @@ class FileServiceImplTest {
         assertThat(resource).isInstanceOf(ByteArrayResource.class);
 
         verify(fileRepository, times(1)).findByIdAndUserId(fileId, userId);
-        verify(storageService, times(1)).downloadFile(testFile.getCloudinaryPublicId());
+        verify(storageService, times(1)).downloadFile(eq(expectedFullPath));
     }
 
     @Test
@@ -253,8 +258,10 @@ class FileServiceImplTest {
     @Test
     void download_StorageFailure_ThrowsStorageException() {
         // Given
+        String expectedFullPath = getExpectedCloudinaryPublicId(testFile.getFolderPath(),
+                testFile.getCloudinaryPublicId());
         when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.of(testFile));
-        when(storageService.downloadFile(testFile.getCloudinaryPublicId()))
+        when(storageService.downloadFile(eq(expectedFullPath)))
                 .thenThrow(new StorageException("Download failed"));
 
         // When/Then
@@ -263,7 +270,7 @@ class FileServiceImplTest {
                 .hasMessageContaining("Download failed");
 
         verify(fileRepository, times(1)).findByIdAndUserId(fileId, userId);
-        verify(storageService, times(1)).downloadFile(testFile.getCloudinaryPublicId());
+        verify(storageService, times(1)).downloadFile(eq(expectedFullPath));
     }
 
     // getSignedDownloadUrl tests
@@ -276,10 +283,12 @@ class FileServiceImplTest {
         resourceDetails.put("format", "jpg");
         resourceDetails.put("resource_type", "image");
         String signedUrl = "https://res.cloudinary.com/test/image/upload/signed-url.jpg";
+        String expectedFullPath = getExpectedCloudinaryPublicId(testFile.getFolderPath(),
+                testFile.getCloudinaryPublicId());
 
         when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.of(testFile));
-        when(storageService.getResourceDetails(testFile.getCloudinaryPublicId())).thenReturn(resourceDetails);
-        when(storageService.generateSignedDownloadUrl(eq(testFile.getCloudinaryPublicId()), eq(expirationMinutes),
+        when(storageService.getResourceDetails(eq(expectedFullPath))).thenReturn(resourceDetails);
+        when(storageService.generateSignedDownloadUrl(eq(expectedFullPath), eq(expirationMinutes),
                 eq("image"))).thenReturn(signedUrl);
 
         // When
@@ -294,8 +303,8 @@ class FileServiceImplTest {
         assertThat(response.getExpiresAt()).isNotNull();
 
         verify(fileRepository, times(1)).findByIdAndUserId(fileId, userId);
-        verify(storageService, times(1)).getResourceDetails(testFile.getCloudinaryPublicId());
-        verify(storageService, times(1)).generateSignedDownloadUrl(eq(testFile.getCloudinaryPublicId()),
+        verify(storageService, times(1)).getResourceDetails(eq(expectedFullPath));
+        verify(storageService, times(1)).generateSignedDownloadUrl(eq(expectedFullPath),
                 eq(expirationMinutes), eq("image"));
     }
 
@@ -329,8 +338,10 @@ class FileServiceImplTest {
     @Test
     void getSignedDownloadUrl_StorageFailure_ThrowsStorageException() {
         // Given
+        String expectedFullPath = getExpectedCloudinaryPublicId(testFile.getFolderPath(),
+                testFile.getCloudinaryPublicId());
         when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.of(testFile));
-        when(storageService.getResourceDetails(testFile.getCloudinaryPublicId()))
+        when(storageService.getResourceDetails(eq(expectedFullPath)))
                 .thenThrow(new StorageException("Storage error"));
 
         // When/Then
@@ -339,7 +350,7 @@ class FileServiceImplTest {
                 .hasMessageContaining("Storage error");
 
         verify(fileRepository, times(1)).findByIdAndUserId(fileId, userId);
-        verify(storageService, times(1)).getResourceDetails(testFile.getCloudinaryPublicId());
+        verify(storageService, times(1)).getResourceDetails(eq(expectedFullPath));
     }
 
     // getById tests
@@ -528,9 +539,13 @@ class FileServiceImplTest {
         moveResult.put("url", "http://res.cloudinary.com/test/image/upload/new.jpg");
         moveResult.put("secure_url", "https://res.cloudinary.com/test/image/upload/new.jpg");
 
+        String currentFullPath = getExpectedCloudinaryPublicId(testFile.getFolderPath(),
+                testFile.getCloudinaryPublicId());
+        String newCloudinaryPath = getExpectedCloudinaryFolderPath(newFolderPath);
+
         when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.of(testFile));
-        when(storageService.getResourceDetails(anyString())).thenReturn(resourceDetails);
-        when(storageService.moveFile(anyString(), eq(newFolderPath), eq("image"))).thenReturn(moveResult);
+        when(storageService.getResourceDetails(eq(currentFullPath))).thenReturn(resourceDetails);
+        when(storageService.moveFile(eq(currentFullPath), eq(newCloudinaryPath), eq("image"))).thenReturn(moveResult);
         when(fileRepository.save(any(File.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         // When
@@ -541,7 +556,7 @@ class FileServiceImplTest {
         assertThat(response.getFolderPath()).isEqualTo(newFolderPath);
 
         verify(fileRepository, times(1)).findByIdAndUserId(fileId, userId);
-        verify(storageService, times(1)).moveFile(anyString(), eq(newFolderPath), eq("image"));
+        verify(storageService, times(1)).moveFile(eq(currentFullPath), eq(newCloudinaryPath), eq("image"));
         verify(fileRepository, times(1)).save(any(File.class));
     }
 
@@ -662,10 +677,12 @@ class FileServiceImplTest {
         TransformRequest request = createTestTransformRequest(800, 600);
         String originalUrl = "https://res.cloudinary.com/test/image/upload/original.jpg";
         String transformedUrl = "https://res.cloudinary.com/test/image/upload/w_800,h_600/original.jpg";
+        String expectedFullPath = getExpectedCloudinaryPublicId(imageFile.getFolderPath(),
+                imageFile.getCloudinaryPublicId());
 
         when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.of(imageFile));
-        when(storageService.getFileUrl(imageFile.getCloudinaryPublicId(), true)).thenReturn(originalUrl);
-        when(storageService.getTransformUrl(eq(imageFile.getCloudinaryPublicId()), eq(true), eq(800), eq(600),
+        when(storageService.getFileUrl(eq(expectedFullPath), eq(true))).thenReturn(originalUrl);
+        when(storageService.getTransformUrl(eq(expectedFullPath), eq(true), eq(800), eq(600),
                 eq("fill"), eq("auto"), eq("webp"))).thenReturn(transformedUrl);
 
         // When
@@ -677,8 +694,8 @@ class FileServiceImplTest {
         assertThat(response.getOriginalUrl()).isEqualTo(originalUrl);
 
         verify(fileRepository, times(1)).findByIdAndUserId(fileId, userId);
-        verify(storageService, times(1)).getFileUrl(imageFile.getCloudinaryPublicId(), true);
-        verify(storageService, times(1)).getTransformUrl(eq(imageFile.getCloudinaryPublicId()), eq(true), eq(800),
+        verify(storageService, times(1)).getFileUrl(eq(expectedFullPath), eq(true));
+        verify(storageService, times(1)).getTransformUrl(eq(expectedFullPath), eq(true), eq(800),
                 eq(600), eq("fill"), eq("auto"), eq("webp"));
     }
 
@@ -719,9 +736,11 @@ class FileServiceImplTest {
         File imageFile = createTestFile(fileId, userId, "test.jpg");
         imageFile.setContentType("image/jpeg");
         TransformRequest request = createTestTransformRequest(800, 600);
+        String expectedFullPath = getExpectedCloudinaryPublicId(imageFile.getFolderPath(),
+                imageFile.getCloudinaryPublicId());
 
         when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.of(imageFile));
-        when(storageService.getFileUrl(imageFile.getCloudinaryPublicId(), true))
+        when(storageService.getFileUrl(eq(expectedFullPath), eq(true)))
                 .thenThrow(new StorageException("Storage error"));
 
         // When/Then
@@ -730,7 +749,7 @@ class FileServiceImplTest {
                 .hasMessageContaining("Storage error");
 
         verify(fileRepository, times(1)).findByIdAndUserId(fileId, userId);
-        verify(storageService, times(1)).getFileUrl(imageFile.getCloudinaryPublicId(), true);
+        verify(storageService, times(1)).getFileUrl(eq(expectedFullPath), eq(true));
     }
 
     @Test
@@ -761,10 +780,12 @@ class FileServiceImplTest {
         imageFile.setContentType("image/jpeg");
         String originalUrl = "https://res.cloudinary.com/test/image/upload/original.jpg";
         String transformedUrl = "https://res.cloudinary.com/test/image/upload/w_800,h_600/original.jpg";
+        String expectedFullPath = getExpectedCloudinaryPublicId(imageFile.getFolderPath(),
+                imageFile.getCloudinaryPublicId());
 
         when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.of(imageFile));
-        when(storageService.getFileUrl(imageFile.getCloudinaryPublicId(), true)).thenReturn(originalUrl);
-        when(storageService.getTransformUrl(eq(imageFile.getCloudinaryPublicId()), eq(true), eq(800), eq(600),
+        when(storageService.getFileUrl(eq(expectedFullPath), eq(true))).thenReturn(originalUrl);
+        when(storageService.getTransformUrl(eq(expectedFullPath), eq(true), eq(800), eq(600),
                 isNull(), isNull(), isNull())).thenReturn(transformedUrl);
 
         // When
@@ -777,8 +798,8 @@ class FileServiceImplTest {
         assertThat(response.getOriginalUrl()).isEqualTo(originalUrl);
 
         verify(fileRepository, times(1)).findByIdAndUserId(fileId, userId);
-        verify(storageService, times(1)).getFileUrl(imageFile.getCloudinaryPublicId(), true);
-        verify(storageService, times(1)).getTransformUrl(eq(imageFile.getCloudinaryPublicId()), eq(true), eq(800),
+        verify(storageService, times(1)).getFileUrl(eq(expectedFullPath), eq(true));
+        verify(storageService, times(1)).getTransformUrl(eq(expectedFullPath), eq(true), eq(800),
                 eq(600), isNull(), isNull(), isNull());
     }
 
@@ -801,9 +822,11 @@ class FileServiceImplTest {
         // Given - Use image file for transformation
         File imageFile = createTestFile(fileId, userId, "test.jpg");
         imageFile.setContentType("image/jpeg");
+        String expectedFullPath = getExpectedCloudinaryPublicId(imageFile.getFolderPath(),
+                imageFile.getCloudinaryPublicId());
 
         when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.of(imageFile));
-        when(storageService.getFileUrl(imageFile.getCloudinaryPublicId(), true))
+        when(storageService.getFileUrl(eq(expectedFullPath), eq(true)))
                 .thenThrow(new StorageException("Storage error"));
 
         // When/Then
@@ -813,7 +836,7 @@ class FileServiceImplTest {
                 .hasMessageContaining("Storage error");
 
         verify(fileRepository, times(1)).findByIdAndUserId(fileId, userId);
-        verify(storageService, times(1)).getFileUrl(imageFile.getCloudinaryPublicId(), true);
+        verify(storageService, times(1)).getFileUrl(eq(expectedFullPath), eq(true));
     }
 
     // search tests
@@ -1057,5 +1080,30 @@ class FileServiceImplTest {
         request.setQuality("auto");
         request.setFormat("webp");
         return request;
+    }
+
+    /**
+     * Helper method to construct expected Cloudinary folder path with userId
+     * prefix.
+     * Format: {userId}/{userFolderPath} or {userId} for root.
+     */
+    private String getExpectedCloudinaryFolderPath(String folderPath) {
+        if (folderPath == null || folderPath.isEmpty()) {
+            return userId.toString();
+        }
+        String normalizedFolder = folderPath.startsWith("/") ? folderPath.substring(1) : folderPath;
+        return userId + "/" + normalizedFolder;
+    }
+
+    /**
+     * Helper method to construct expected Cloudinary public ID with userId prefix.
+     * Format: {userId}/{userFolderPath}/{uuid} or {userId}/{uuid} for root.
+     */
+    private String getExpectedCloudinaryPublicId(String folderPath, String publicId) {
+        if (folderPath == null || folderPath.isEmpty()) {
+            return userId + "/" + publicId;
+        }
+        String normalizedFolder = folderPath.startsWith("/") ? folderPath.substring(1) : folderPath;
+        return userId + "/" + normalizedFolder + "/" + publicId;
     }
 }

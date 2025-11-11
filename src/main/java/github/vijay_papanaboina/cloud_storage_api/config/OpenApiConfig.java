@@ -5,6 +5,7 @@ import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Contact;
 import io.swagger.v3.oas.models.info.Info;
 import io.swagger.v3.oas.models.info.License;
+import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.security.SecurityScheme;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -50,6 +51,12 @@ public class OpenApiConfig {
                                 .name("X-API-Key")
                                 .description("API Key authentication. " +
                                         "Generate an API key via /api/auth/api-keys. " +
-                                        "Include the key in the X-API-Key header.")));
+                                        "Include the key in the X-API-Key header.")))
+                // Add global security requirement - this tells Swagger UI to include
+                // Authorization header in requests to protected endpoints
+                // Using bearer-jwt as the default (users can also use api-key if needed)
+                // Note: Multiple security requirements are treated as OR (any one), not AND
+                // (all)
+                .addSecurityItem(new SecurityRequirement().addList("bearer-jwt"));
     }
 }

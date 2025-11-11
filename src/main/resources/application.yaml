@@ -131,4 +131,7 @@ springdoc:
   swagger-ui:
     path: /swagger-ui.html
     enabled: true
+    persist-authorization: true # Persist auth token in browser
+    try-it-out-enabled: true
   packages-to-scan: github.vijay_papanaboina.cloud_storage_api.controller
+  default-produces-media-type: application/json

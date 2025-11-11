@@ -3,6 +3,12 @@ package github.vijay_papanaboina.cloud_storage_api.controller;
 import github.vijay_papanaboina.cloud_storage_api.dto.*;
 import github.vijay_papanaboina.cloud_storage_api.security.SecurityUtils;
 import github.vijay_papanaboina.cloud_storage_api.service.FileService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.Resource;
@@ -47,10 +53,19 @@ public class FileController {
      * @param folderPath Optional folder path
      * @return FileResponse with file metadata
      */
-    @PostMapping("/upload")
+    @Operation(summary = "Upload a file", description = "Upload a new file to cloud storage. The file will be associated with the authenticated user. "
+            +
+            "Use Unix-style paths (forward slashes) for folderPath, e.g., /photos/2024")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "201", description = "File uploaded successfully", content = @Content(schema = @Schema(implementation = FileResponse.class))),
+            @ApiResponse(responseCode = "400", description = "Invalid file or request"),
+            @ApiResponse(responseCode = "401", description = "Unauthorized"),
+            @ApiResponse(responseCode = "403", description = "Forbidden")
+    })
+    @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<FileResponse> uploadFile(
-            @RequestParam("file") MultipartFile file,
-            @RequestParam(value = "folderPath", required = false) String folderPath) {
+            @Parameter(description = "File to upload", required = true, content = @Content(mediaType = MediaType.APPLICATION_OCTET_STREAM_VALUE)) @RequestParam("file") MultipartFile file,
+            @Parameter(description = "Optional folder path (Unix-style, e.g., /photos/2024). Must start with '/' if provided.", required = false) @RequestParam(value = "folderPath", required = false) String folderPath) {
         UUID userId = SecurityUtils.getAuthenticatedUserId();
         Optional<String> folderPathOpt = Optional.ofNullable(folderPath);
         FileResponse response = fileService.upload(file, folderPathOpt, userId);

@@ -17,6 +17,7 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
@@ -38,6 +39,8 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable()) // Disable CSRF for stateless API
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        // Allow OPTIONS requests for CORS preflight
+                        .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
                         // Public endpoints
                         .requestMatchers("/api/auth/login", "/api/auth/register", "/api/auth/refresh").permitAll()
                         .requestMatchers("/api/health", "/actuator/health").permitAll()
@@ -67,8 +70,8 @@ public class SecurityConfig {
                 && !corsProperties.getAllowedOrigins().isEmpty()) {
             origins = corsProperties.getAllowedOrigins();
         } else {
-            // Default fallback
-            origins = Arrays.asList("http://localhost:3000", "http://localhost:8080");
+            // Default fallback - include Swagger UI origin (same server)
+            origins = Arrays.asList("http://localhost:3000", "http://localhost:8080", "http://localhost:8000");
         }
         configuration.setAllowedOrigins(origins);
 
@@ -88,7 +91,10 @@ public class SecurityConfig {
                 && !corsProperties.getAllowedHeaders().isEmpty()) {
             headers = corsProperties.getAllowedHeaders();
         } else {
-            headers = Arrays.asList("*");
+            // Default: explicitly include Authorization header for Swagger UI and API
+            // clients
+            headers = Arrays.asList("Authorization", "Content-Type", "Accept", "X-Requested-With", "Origin",
+                    "X-API-Key");
         }
 
         // Set allow credentials from configuration or default (false for security)
@@ -99,7 +105,16 @@ public class SecurityConfig {
         // allowed
         if (allowCreds && headers.contains("*")) {
             // Use explicit list of safe headers when credentials are allowed
-            headers = Arrays.asList("Authorization", "Content-Type", "Accept", "X-Requested-With", "Origin");
+            headers = Arrays.asList("Authorization", "Content-Type", "Accept", "X-Requested-With", "Origin",
+                    "X-API-Key");
+        }
+
+        // Ensure Authorization header is always in the list for Swagger UI
+        // compatibility
+        if (!headers.contains("Authorization") && !headers.contains("*")) {
+            List<String> updatedHeaders = new ArrayList<>(headers);
+            updatedHeaders.add("Authorization");
+            headers = updatedHeaders;
         }
 
         configuration.setAllowedHeaders(headers);

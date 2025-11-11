@@ -52,8 +52,18 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
             // Extract token from Authorization header
             String token = extractTokenFromRequest(request);
+            String authHeader = request.getHeader(AUTHORIZATION_HEADER);
+
+            if (authHeader != null) {
+                log.info("Authorization header received: {}... (length: {})",
+                        authHeader.length() > 20 ? authHeader.substring(0, 20) : authHeader,
+                        authHeader.length());
+            } else {
+                log.info("No Authorization header found in request to: {}", request.getRequestURI());
+            }
 
             if (token != null) {
+                log.info("JWT token extracted, validating...");
                 // Validate token
                 if (jwtTokenProvider.validateToken(token)) {
                     try {
@@ -69,14 +79,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
                         // Set authentication in SecurityContext
                         SecurityContextHolder.getContext().setAuthentication(authentication);
-                        log.debug("JWT authentication successful for user: {}", userId);
+                        log.info("JWT authentication successful for user: {}", userId);
                     } catch (InvalidTokenException e) {
-                        log.debug("Invalid JWT token: {}", e.getMessage());
+                        log.warn("Invalid JWT token: {}", e.getMessage());
                         // Continue without authentication - Spring Security will handle 401
                     }
                 } else {
-                    log.debug("JWT token validation failed");
+                    log.warn("JWT token validation failed");
                 }
+            } else {
+                log.info("No JWT token found in request to: {}", request.getRequestURI());
             }
         } catch (Exception e) {
             log.error("Error processing JWT authentication", e);

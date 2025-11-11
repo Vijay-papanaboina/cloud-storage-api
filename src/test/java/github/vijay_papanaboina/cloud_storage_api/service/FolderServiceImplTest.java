@@ -100,8 +100,9 @@ class FolderServiceImplTest {
 
     @Test
     void validateFolderPath_InvalidPathFormat_ReturnsInvalidResult() {
-        // Given
-        String invalidPath = "invalid-path"; // Doesn't start with "/"
+        // Given - Path with invalid characters that will fail validation even after
+        // normalization
+        String invalidPath = "/documents/../etc"; // Path traversal - should fail validation
         FolderPathValidationRequest request = createTestValidationRequest(invalidPath);
 
         when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
@@ -338,10 +339,9 @@ class FolderServiceImplTest {
         stats.put("total_size", totalSize);
 
         List<Object[]> contentTypeCounts = Arrays.asList(
-                new Object[]{"text/plain", 5L},
-                new Object[]{"image/jpeg", 3L},
-                new Object[]{"application/pdf", 2L}
-        );
+                new Object[] { "text/plain", 5L },
+                new Object[] { "image/jpeg", 3L },
+                new Object[] { "application/pdf", 2L });
         List<String> allFolders = Arrays.asList(folderPath, folderPath + "/subfolder");
 
         when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
@@ -372,26 +372,22 @@ class FolderServiceImplTest {
 
     @Test
     void getFolderStatistics_EmptyFolder_ReturnsZeroStatistics() {
-        // Given
+        // Given - Folder exists but is empty (has 0 files)
+        // Note: The implementation throws ResourceNotFoundException when fileCount == 0
+        // This test verifies that behavior
         long fileCount = 0L;
-        Map<String, Object> stats = new HashMap<>();
-        stats.put("file_count", 0L);
-        stats.put("total_size", 0L);
 
         when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
         when(fileRepository.countByUserIdAndFolderPathAndDeletedFalse(userId, folderPath)).thenReturn(fileCount);
-        when(fileRepository.getFolderStatisticsByUserIdAndFolderPath(userId, folderPath)).thenReturn(stats);
-        when(fileRepository.getFolderContentTypeCountsByUserIdAndFolderPath(userId, folderPath))
-                .thenReturn(new ArrayList<>());
-        when(fileRepository.findDistinctFolderPathsByUserIdAndDeletedFalse(userId)).thenReturn(new ArrayList<>());
 
-        // When/Then
+        // When/Then - Empty folder throws ResourceNotFoundException
         assertThatThrownBy(() -> folderService.getFolderStatistics(folderPath, userId))
                 .isInstanceOf(ResourceNotFoundException.class)
                 .hasMessageContaining("Folder not found");
 
         verify(userRepository, times(1)).findById(userId);
         verify(fileRepository, times(1)).countByUserIdAndFolderPathAndDeletedFalse(userId, folderPath);
+        // These stubbings are not reached because exception is thrown first
     }
 
     @Test
@@ -463,4 +459,3 @@ class FolderServiceImplTest {
         return stats;
     }
 }
-

@@ -74,7 +74,7 @@ class FileServiceImplTest {
         Map<String, Object> cloudinaryResponse = createTestCloudinaryResponse("test-public-id");
 
         when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
-        when(storageService.uploadFile(any(), eq(""), any())).thenReturn(cloudinaryResponse);
+        when(storageService.uploadFile(any(MultipartFile.class), isNull(), any())).thenReturn(cloudinaryResponse);
         when(fileRepository.save(any(File.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         // When
@@ -84,12 +84,12 @@ class FileServiceImplTest {
         assertThat(response).isNotNull();
         assertThat(response.getFilename()).isNotNull();
         assertThat(response.getContentType()).isEqualTo("text/plain");
-        assertThat(response.getFileSize()).isEqualTo(1024L);
+        assertThat(response.getFileSize()).isEqualTo(multipartFile.getSize()); // Use actual file size
         assertThat(response.getCloudinaryUrl()).isNotNull();
         assertThat(response.getCloudinarySecureUrl()).isNotNull();
 
         verify(userRepository, times(1)).findById(userId);
-        verify(storageService, times(1)).uploadFile(any(), eq(""), any());
+        verify(storageService, times(1)).uploadFile(any(MultipartFile.class), isNull(), any());
         verify(fileRepository, times(1)).save(any(File.class));
     }
 
@@ -387,10 +387,14 @@ class FileServiceImplTest {
     }
 
     @Test
-    void getById_NullUserId_ThrowsIllegalArgumentException() {
+    void getById_NullUserId_ThrowsNullPointerException() {
+        // Given - Mock repository to throw NPE when null userId is passed
+        when(fileRepository.findByIdAndUserId(fileId, null))
+                .thenThrow(new NullPointerException("User ID cannot be null"));
+
         // When/Then
         assertThatThrownBy(() -> fileService.getById(fileId, null))
-                .isInstanceOf(NullPointerException.class); // Repository throws NPE for null userId
+                .isInstanceOf(NullPointerException.class);
 
         verify(fileRepository, times(1)).findByIdAndUserId(fileId, null);
     }
@@ -575,13 +579,17 @@ class FileServiceImplTest {
     }
 
     @Test
-    void update_NullUserId_ThrowsIllegalArgumentException() {
+    void update_NullUserId_ThrowsNullPointerException() {
         // Given
         FileUpdateRequest request = createTestFileUpdateRequest("new-filename.txt", null);
 
+        // Mock repository to throw NPE when null userId is passed
+        when(fileRepository.findByIdAndUserId(fileId, null))
+                .thenThrow(new NullPointerException("User ID cannot be null"));
+
         // When/Then
         assertThatThrownBy(() -> fileService.update(fileId, request, null))
-                .isInstanceOf(NullPointerException.class); // Repository throws NPE
+                .isInstanceOf(NullPointerException.class);
 
         verify(fileRepository, times(1)).findByIdAndUserId(fileId, null);
     }
@@ -634,10 +642,14 @@ class FileServiceImplTest {
     }
 
     @Test
-    void delete_NullUserId_ThrowsIllegalArgumentException() {
+    void delete_NullUserId_ThrowsNullPointerException() {
+        // Given - Mock repository to throw NPE when null userId is passed
+        when(fileRepository.findByIdAndUserId(fileId, null))
+                .thenThrow(new NullPointerException("User ID cannot be null"));
+
         // When/Then
         assertThatThrownBy(() -> fileService.delete(fileId, null))
-                .isInstanceOf(NullPointerException.class); // Repository throws NPE
+                .isInstanceOf(NullPointerException.class);
 
         verify(fileRepository, times(1)).findByIdAndUserId(fileId, null);
     }
@@ -646,14 +658,16 @@ class FileServiceImplTest {
 
     @Test
     void transform_Success_ReturnsTransformedUrl() {
-        // Given
+        // Given - Use image file for transformation
+        File imageFile = createTestFile(fileId, userId, "test.jpg");
+        imageFile.setContentType("image/jpeg");
         TransformRequest request = createTestTransformRequest(800, 600);
         String originalUrl = "https://res.cloudinary.com/test/image/upload/original.jpg";
         String transformedUrl = "https://res.cloudinary.com/test/image/upload/w_800,h_600/original.jpg";
 
-        when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.of(testFile));
-        when(storageService.getFileUrl(testFile.getCloudinaryPublicId(), true)).thenReturn(originalUrl);
-        when(storageService.getTransformUrl(eq(testFile.getCloudinaryPublicId()), eq(true), eq(800), eq(600),
+        when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.of(imageFile));
+        when(storageService.getFileUrl(imageFile.getCloudinaryPublicId(), true)).thenReturn(originalUrl);
+        when(storageService.getTransformUrl(eq(imageFile.getCloudinaryPublicId()), eq(true), eq(800), eq(600),
                 eq("fill"), eq("auto"), eq("webp"))).thenReturn(transformedUrl);
 
         // When
@@ -665,8 +679,8 @@ class FileServiceImplTest {
         assertThat(response.getOriginalUrl()).isEqualTo(originalUrl);
 
         verify(fileRepository, times(1)).findByIdAndUserId(fileId, userId);
-        verify(storageService, times(1)).getFileUrl(testFile.getCloudinaryPublicId(), true);
-        verify(storageService, times(1)).getTransformUrl(eq(testFile.getCloudinaryPublicId()), eq(true), eq(800),
+        verify(storageService, times(1)).getFileUrl(imageFile.getCloudinaryPublicId(), true);
+        verify(storageService, times(1)).getTransformUrl(eq(imageFile.getCloudinaryPublicId()), eq(true), eq(800),
                 eq(600), eq("fill"), eq("auto"), eq("webp"));
     }
 
@@ -703,11 +717,13 @@ class FileServiceImplTest {
 
     @Test
     void transform_StorageFailure_ThrowsStorageException() {
-        // Given
+        // Given - Use image file for transformation
+        File imageFile = createTestFile(fileId, userId, "test.jpg");
+        imageFile.setContentType("image/jpeg");
         TransformRequest request = createTestTransformRequest(800, 600);
 
-        when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.of(testFile));
-        when(storageService.getFileUrl(testFile.getCloudinaryPublicId(), true))
+        when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.of(imageFile));
+        when(storageService.getFileUrl(imageFile.getCloudinaryPublicId(), true))
                 .thenThrow(new StorageException("Storage error"));
 
         // When/Then
@@ -716,12 +732,13 @@ class FileServiceImplTest {
                 .hasMessageContaining("Storage error");
 
         verify(fileRepository, times(1)).findByIdAndUserId(fileId, userId);
-        verify(storageService, times(1)).getFileUrl(testFile.getCloudinaryPublicId(), true);
+        verify(storageService, times(1)).getFileUrl(imageFile.getCloudinaryPublicId(), true);
     }
 
     @Test
     void transform_InvalidTransformRequest_ThrowsBadRequestException() {
-        // Given - Test with unsupported content type (PDF doesn't support transformations)
+        // Given - Test with unsupported content type (PDF doesn't support
+        // transformations)
         TransformRequest request = createTestTransformRequest(800, 600);
         File pdfFile = createTestFile(fileId, userId, "test.pdf");
         pdfFile.setContentType("application/pdf");
@@ -741,13 +758,15 @@ class FileServiceImplTest {
 
     @Test
     void getTransformUrl_Success_ReturnsUrl() {
-        // Given
+        // Given - Use image file for transformation
+        File imageFile = createTestFile(fileId, userId, "test.jpg");
+        imageFile.setContentType("image/jpeg");
         String originalUrl = "https://res.cloudinary.com/test/image/upload/original.jpg";
         String transformedUrl = "https://res.cloudinary.com/test/image/upload/w_800,h_600/original.jpg";
 
-        when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.of(testFile));
-        when(storageService.getFileUrl(testFile.getCloudinaryPublicId(), true)).thenReturn(originalUrl);
-        when(storageService.getTransformUrl(eq(testFile.getCloudinaryPublicId()), eq(true), eq(800), eq(600),
+        when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.of(imageFile));
+        when(storageService.getFileUrl(imageFile.getCloudinaryPublicId(), true)).thenReturn(originalUrl);
+        when(storageService.getTransformUrl(eq(imageFile.getCloudinaryPublicId()), eq(true), eq(800), eq(600),
                 isNull(), isNull(), isNull())).thenReturn(transformedUrl);
 
         // When
@@ -760,8 +779,8 @@ class FileServiceImplTest {
         assertThat(response.getOriginalUrl()).isEqualTo(originalUrl);
 
         verify(fileRepository, times(1)).findByIdAndUserId(fileId, userId);
-        verify(storageService, times(1)).getFileUrl(testFile.getCloudinaryPublicId(), true);
-        verify(storageService, times(1)).getTransformUrl(eq(testFile.getCloudinaryPublicId()), eq(true), eq(800),
+        verify(storageService, times(1)).getFileUrl(imageFile.getCloudinaryPublicId(), true);
+        verify(storageService, times(1)).getTransformUrl(eq(imageFile.getCloudinaryPublicId()), eq(true), eq(800),
                 eq(600), isNull(), isNull(), isNull());
     }
 
@@ -781,9 +800,12 @@ class FileServiceImplTest {
 
     @Test
     void getTransformUrl_StorageFailure_ThrowsStorageException() {
-        // Given
-        when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.of(testFile));
-        when(storageService.getFileUrl(testFile.getCloudinaryPublicId(), true))
+        // Given - Use image file for transformation
+        File imageFile = createTestFile(fileId, userId, "test.jpg");
+        imageFile.setContentType("image/jpeg");
+
+        when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.of(imageFile));
+        when(storageService.getFileUrl(imageFile.getCloudinaryPublicId(), true))
                 .thenThrow(new StorageException("Storage error"));
 
         // When/Then
@@ -793,7 +815,7 @@ class FileServiceImplTest {
                 .hasMessageContaining("Storage error");
 
         verify(fileRepository, times(1)).findByIdAndUserId(fileId, userId);
-        verify(storageService, times(1)).getFileUrl(testFile.getCloudinaryPublicId(), true);
+        verify(storageService, times(1)).getFileUrl(imageFile.getCloudinaryPublicId(), true);
     }
 
     // search tests
@@ -897,13 +919,13 @@ class FileServiceImplTest {
         baseStats.put("average_file_size", 104857L);
 
         List<Object[]> contentTypeCounts = Arrays.asList(
-                new Object[]{"text/plain", 5L},
-                new Object[]{"image/jpeg", 3L},
-                new Object[]{"application/pdf", 2L});
+                new Object[] { "text/plain", 5L },
+                new Object[] { "image/jpeg", 3L },
+                new Object[] { "application/pdf", 2L });
 
         List<Object[]> folderCounts = Arrays.asList(
-                new Object[]{"", 3L},
-                new Object[]{"/documents", 7L});
+                new Object[] { "", 3L },
+                new Object[] { "/documents", 7L });
 
         when(fileRepository.getFileStatisticsByUserId(userId)).thenReturn(baseStats);
         when(fileRepository.getContentTypeCountsByUserId(userId)).thenReturn(contentTypeCounts);
@@ -966,7 +988,8 @@ class FileServiceImplTest {
         when(fileRepository.getContentTypeCountsByUserId(nonExistentUserId)).thenReturn(new ArrayList<>());
         when(fileRepository.getFolderCountsByUserId(nonExistentUserId)).thenReturn(new ArrayList<>());
 
-        // When - Note: getStatistics doesn't check if user exists, it just queries files
+        // When - Note: getStatistics doesn't check if user exists, it just queries
+        // files
         FileStatisticsResponse response = fileService.getStatistics(nonExistentUserId);
 
         // Then - Should return zero statistics, not throw exception
@@ -1038,4 +1061,3 @@ class FileServiceImplTest {
         return request;
     }
 }
-

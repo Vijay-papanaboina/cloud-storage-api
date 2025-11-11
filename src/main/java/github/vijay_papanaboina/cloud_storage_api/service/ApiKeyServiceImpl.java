@@ -41,11 +41,11 @@ public class ApiKeyServiceImpl implements ApiKeyService {
     @Override
     @Transactional
     public ApiKeyResponse generateApiKey(ApiKeyRequest request, UUID userId) {
-        log.info("Generating API key: userId={}, name={}", userId, request.getName());
-
         // Validate request parameter
         Objects.requireNonNull(request, "Request cannot be null");
         Objects.requireNonNull(request.getName(), "API key name cannot be null");
+
+        log.info("Generating API key: userId={}, name={}", userId, request.getName());
 
         // Ensure userId is not null
         Objects.requireNonNull(userId, "User ID cannot be null");

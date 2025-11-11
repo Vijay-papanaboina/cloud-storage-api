@@ -150,6 +150,30 @@ public class ApiKeyServiceImpl implements ApiKeyService {
         log.info("API key revoked successfully: apiKeyId={}, userId={}", id, userId);
     }
 
+    @Override
+    @Transactional
+    public void updateLastUsedAt(UUID apiKeyId) {
+        Objects.requireNonNull(apiKeyId, "API key ID cannot be null");
+        try {
+            // Find the API key by ID to get a managed entity
+            ApiKey apiKey = apiKeyRepository.findById(apiKeyId)
+                    .orElse(null);
+
+            if (apiKey != null) {
+                // Update lastUsedAt on the managed entity
+                apiKey.setLastUsedAt(Instant.now());
+                // Save the managed entity
+                apiKeyRepository.save(apiKey);
+                log.debug("Updated lastUsedAt for API key: {}", apiKeyId);
+            } else {
+                log.warn("API key not found when updating lastUsedAt: {}", apiKeyId);
+            }
+        } catch (Exception e) {
+            // Log error but don't fail authentication
+            log.warn("Failed to update lastUsedAt for API key: {}", apiKeyId, e);
+        }
+    }
+
     /**
      * Generate a unique 32-character alphanumeric API key.
      * Uses SecureRandom with Base64 URL encoding for cryptographically secure

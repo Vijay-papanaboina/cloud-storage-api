@@ -237,7 +237,9 @@ public class AuthServiceImpl implements AuthService {
 
         // Ensure userId is not null (should never happen with valid token, but
         // satisfies type safety)
-        Objects.requireNonNull(userId, "User ID cannot be null");
+        if (userId == null) {
+            throw new IllegalArgumentException("User ID cannot be null");
+        }
 
         // Verify user exists
         if (!userRepository.existsById(userId)) {

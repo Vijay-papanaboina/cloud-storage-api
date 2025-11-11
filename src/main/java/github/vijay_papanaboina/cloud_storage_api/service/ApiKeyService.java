@@ -20,7 +20,8 @@ public interface ApiKeyService {
      * @param userId  User ID of the authenticated user
      * @return ApiKeyResponse with the generated API key (key value included)
      * @throws ResourceNotFoundException if user is not found
-     * @throws BadRequestException       if request validation fails or user is inactive
+     * @throws BadRequestException       if request validation fails or user is
+     *                                   inactive
      */
     ApiKeyResponse generateApiKey(ApiKeyRequest request, UUID userId);
 
@@ -43,7 +44,7 @@ public interface ApiKeyService {
      * @param userId User ID of the authenticated user
      * @return ApiKeyResponse (without key value)
      * @throws ResourceNotFoundException if API key is not found
-     * @throws ForbiddenException       if API key belongs to another user
+     * @throws ForbiddenException        if API key belongs to another user
      */
     ApiKeyResponse getApiKey(UUID id, UUID userId);
 
@@ -54,8 +55,18 @@ public interface ApiKeyService {
      * @param id     API key ID
      * @param userId User ID of the authenticated user
      * @throws ResourceNotFoundException if API key is not found
-     * @throws ForbiddenException       if API key belongs to another user
+     * @throws ForbiddenException        if API key belongs to another user
      */
     void revokeApiKey(UUID id, UUID userId);
-}
 
+    /**
+     * Update the lastUsedAt timestamp for an API key.
+     * This method is transactional and uses a managed entity to ensure proper
+     * entity lifecycle management.
+     *
+     * @param apiKeyId API key ID to update
+     * @throws ResourceNotFoundException if the API key ID does not exist
+     * @throws BadRequestException       if the API key ID is null or invalid
+     */
+    void updateLastUsedAt(UUID apiKeyId);
+}

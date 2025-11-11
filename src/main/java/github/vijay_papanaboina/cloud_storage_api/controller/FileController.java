@@ -19,6 +19,7 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Optional;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -95,6 +96,7 @@ public class FileController {
 
         // Parse sort parameter
         Sort sortObj = parseSort(sort);
+        Objects.requireNonNull(sortObj, "sortObj cannot be null");
         Pageable pageable = PageRequest.of(page, size, sortObj);
 
         Optional<String> contentTypeOpt = Optional.ofNullable(contentType);

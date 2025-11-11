@@ -5,12 +5,14 @@ import github.vijay_papanaboina.cloud_storage_api.model.BatchJobStatus;
 import github.vijay_papanaboina.cloud_storage_api.model.BatchJobType;
 import github.vijay_papanaboina.cloud_storage_api.model.User;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.annotation.DirtiesContext;
 
 import java.time.Instant;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class BatchJobIntegrationTest extends BaseIntegrationTest {
 
     private BatchJob createTestBatchJob(User user, BatchJobType jobType, BatchJobStatus status) {

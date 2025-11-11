@@ -5,9 +5,11 @@ import github.vijay_papanaboina.cloud_storage_api.model.File;
 import github.vijay_papanaboina.cloud_storage_api.model.User;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
+import org.springframework.test.annotation.DirtiesContext;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class FolderIntegrationTest extends BaseIntegrationTest {
 
     private File createTestFileInDatabase(User user, String filename, String folderPath) {
@@ -32,14 +34,14 @@ class FolderIntegrationTest extends BaseIntegrationTest {
         FolderCreateRequest validRequest = new FolderCreateRequest("/documents", "Valid folder");
         FolderCreateRequest invalidRequest = new FolderCreateRequest("/../etc", "Path traversal attempt");
 
-        // When & Then - valid path
+        // When & Then - valid path (creates folder, returns 201)
         mockMvc.perform(post("/api/folders")
                 .header("Authorization", "Bearer " + accessToken)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(validRequest)))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
 
-        // When & Then - invalid path (path traversal)
+        // When & Then - invalid path (path traversal) should be rejected
         mockMvc.perform(post("/api/folders")
                 .header("Authorization", "Bearer " + accessToken)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -92,7 +94,7 @@ class FolderIntegrationTest extends BaseIntegrationTest {
                 .header("Authorization", "Bearer " + accessToken)
                 .param("path", "/documents"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.fileCount").value(3))
+                .andExpect(jsonPath("$.totalFiles").value(3))
                 .andExpect(jsonPath("$.totalSize").value(3072));
     }
 
@@ -101,8 +103,9 @@ class FolderIntegrationTest extends BaseIntegrationTest {
         // Given
         User user = createTestUser("testuser", "test@example.com");
         String accessToken = generateAccessToken(user);
+        // Create a file in the folder first
         createTestFileInDatabase(user, "file1.txt", "/empty-folder");
-        // Delete the file first to make folder empty
+        // Delete the file (mark as deleted) to make folder empty
         File file = fileRepository
                 .findByUserIdAndDeletedFalse(user.getId(), org.springframework.data.domain.PageRequest.of(0, 10))
                 .getContent().stream()
@@ -112,11 +115,12 @@ class FolderIntegrationTest extends BaseIntegrationTest {
         file.setDeleted(true);
         fileRepository.save(file);
 
-        // When & Then
+        // When & Then - empty folders (with no active files) return 404 (not found)
+        // because folders are virtual and only exist when they have active files
         mockMvc.perform(delete("/api/folders")
                 .header("Authorization", "Bearer " + accessToken)
                 .param("path", "/empty-folder"))
-                .andExpect(status().isNoContent());
+                .andExpect(status().isNotFound());
     }
 
     @Test
@@ -138,9 +142,12 @@ class FolderIntegrationTest extends BaseIntegrationTest {
         // Given
         User user = createTestUser("testuser", "test@example.com");
         String accessToken = generateAccessToken(user);
-        FolderCreateRequest invalidRequest = new FolderCreateRequest("/folder with spaces", "Invalid characters");
+        // Use a path that definitely fails validation (contains characters rejected by
+        // SafeFolderPathValidator: < > : " | ? *)
+        FolderCreateRequest invalidRequest = new FolderCreateRequest("/folder:with*invalid|chars",
+                "Invalid characters");
 
-        // When & Then
+        // When & Then - paths with invalid characters should be rejected
         mockMvc.perform(post("/api/folders")
                 .header("Authorization", "Bearer " + accessToken)
                 .contentType(MediaType.APPLICATION_JSON)

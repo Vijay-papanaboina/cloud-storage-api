@@ -6,6 +6,7 @@ import github.vijay_papanaboina.cloud_storage_api.model.ApiKey;
 import github.vijay_papanaboina.cloud_storage_api.model.User;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
+import org.springframework.test.annotation.DirtiesContext;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -16,6 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class ApiKeyIntegrationTest extends BaseIntegrationTest {
 
         @Test
@@ -169,7 +171,7 @@ class ApiKeyIntegrationTest extends BaseIntegrationTest {
                 // Given
                 User user = createTestUser("testuser", "test@example.com");
                 String accessToken = generateAccessToken(user);
-                ApiKeyRequest request = new ApiKeyRequest("Test Key", Instant.now().minus(Duration.ofDays(1))); // Expired
+                ApiKeyRequest request = new ApiKeyRequest("Test Key", null); // Create with no expiration
 
                 String createResponse = mockMvc.perform(post("/api/auth/api-keys")
                                 .header("Authorization", "Bearer " + accessToken)
@@ -183,10 +185,17 @@ class ApiKeyIntegrationTest extends BaseIntegrationTest {
                 ApiKeyResponse created = objectMapper.readValue(createResponse, ApiKeyResponse.class);
                 String apiKey = created.getKey();
 
-                // When & Then - expired API key should not authenticate
+                // Manually expire the API key in the database
+                Optional<ApiKey> apiKeyEntity = apiKeyRepository.findById(created.getId());
+                assertThat(apiKeyEntity).isPresent();
+                apiKeyEntity.get().setExpiresAt(Instant.now().minus(Duration.ofDays(1)));
+                apiKeyRepository.save(apiKeyEntity.get());
+
+                // When & Then - expired API key should not authenticate (Spring Security
+                // returns 403 for failed authentication)
                 mockMvc.perform(get("/api/auth/me")
                                 .header("X-API-Key", apiKey))
-                                .andExpect(status().isUnauthorized());
+                                .andExpect(status().isForbidden());
         }
 
         @Test

@@ -6,6 +6,7 @@ import github.vijay_papanaboina.cloud_storage_api.model.User;
 import github.vijay_papanaboina.cloud_storage_api.security.JwtTokenProvider;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
+import org.springframework.test.annotation.DirtiesContext;
 
 import java.util.Optional;
 
@@ -13,6 +14,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class AuthIntegrationTest extends BaseIntegrationTest {
 
     @Test
@@ -113,11 +115,16 @@ class AuthIntegrationTest extends BaseIntegrationTest {
         // Given
         User user = createTestUser("testuser", "test@example.com");
         String accessToken = generateAccessToken(user);
+        String refreshToken = jwtTokenProvider.generateRefreshToken(user.getId(), user.getUsername(),
+                github.vijay_papanaboina.cloud_storage_api.model.ClientType.WEB);
+        RefreshTokenRequest request = new RefreshTokenRequest(refreshToken);
 
-        // When & Then
+        // When & Then - logout requires authentication (access token in header)
         mockMvc.perform(post("/api/auth/logout")
-                .header("Authorization", "Bearer " + accessToken))
-                .andExpect(status().isOk());
+                .header("Authorization", "Bearer " + accessToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isNoContent());
     }
 
     @Test

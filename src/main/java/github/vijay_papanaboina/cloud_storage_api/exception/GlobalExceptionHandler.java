@@ -21,7 +21,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
-@ControllerAdvice
+@ControllerAdvice(basePackages = "github.vijay_papanaboina.cloud_storage_api.controller")
 public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);

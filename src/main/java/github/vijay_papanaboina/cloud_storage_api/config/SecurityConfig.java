@@ -41,6 +41,10 @@ public class SecurityConfig {
                         // Public endpoints
                         .requestMatchers("/api/auth/login", "/api/auth/register", "/api/auth/refresh").permitAll()
                         .requestMatchers("/api/health", "/actuator/health").permitAll()
+                        // Swagger UI and OpenAPI documentation endpoints
+                        .requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**",
+                                "/swagger-resources/**", "/webjars/**")
+                        .permitAll()
                         // All other requests require authentication
                         .anyRequest().authenticated())
                 // Add composite authentication filter before

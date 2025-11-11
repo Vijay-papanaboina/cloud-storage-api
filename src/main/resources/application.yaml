@@ -123,3 +123,12 @@ management:
     export:
       prometheus:
         enabled: true
+
+# SpringDoc OpenAPI Configuration
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+  packages-to-scan: github.vijay_papanaboina.cloud_storage_api.controller

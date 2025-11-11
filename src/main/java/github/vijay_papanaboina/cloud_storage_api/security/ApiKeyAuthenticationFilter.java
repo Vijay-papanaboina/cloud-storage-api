@@ -11,6 +11,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.lang.NonNull;
 import org.springframework.security.core.Authentication;
@@ -42,7 +43,7 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
     private String apiKeyHeaderName;
 
     @Autowired
-    public ApiKeyAuthenticationFilter(ApiKeyRepository apiKeyRepository, ApiKeyService apiKeyService) {
+    public ApiKeyAuthenticationFilter(@Lazy ApiKeyRepository apiKeyRepository, @Lazy ApiKeyService apiKeyService) {
         this.apiKeyRepository = apiKeyRepository;
         this.apiKeyService = apiKeyService;
     }

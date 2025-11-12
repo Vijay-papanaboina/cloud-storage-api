@@ -17,10 +17,11 @@ public interface FileService {
      * @param file       The file to upload
      * @param folderPath Optional folder path. Empty Optional or empty string means
      *                   no folder.
+     * @param filename   Optional custom filename. Empty Optional means use original filename.
      * @param userId     The authenticated user's ID
      * @return FileResponse with file metadata
      */
-    FileResponse upload(MultipartFile file, Optional<String> folderPath, UUID userId);
+    FileResponse upload(MultipartFile file, Optional<String> folderPath, Optional<String> filename, UUID userId);
 
     /**
      * Download a file from Cloudinary

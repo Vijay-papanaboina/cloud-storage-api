@@ -51,6 +51,7 @@ public class FileController {
      *
      * @param file       The file to upload
      * @param folderPath Optional folder path
+     * @param filename   Optional custom filename (defaults to original filename)
      * @return FileResponse with file metadata
      */
     @Operation(summary = "Upload a file", description = "Upload a new file to cloud storage. The file will be associated with the authenticated user. "
@@ -65,10 +66,12 @@ public class FileController {
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<FileResponse> uploadFile(
             @Parameter(description = "File to upload", required = true, content = @Content(mediaType = MediaType.APPLICATION_OCTET_STREAM_VALUE)) @RequestParam("file") MultipartFile file,
-            @Parameter(description = "Optional folder path (Unix-style, e.g., /photos/2024). Must start with '/' if provided.", required = false) @RequestParam(value = "folderPath", required = false) String folderPath) {
+            @Parameter(description = "Optional folder path (Unix-style, e.g., /photos/2024). Must start with '/' if provided.", required = false) @RequestParam(value = "folderPath", required = false) String folderPath,
+            @Parameter(description = "Optional custom filename (defaults to original filename if not provided).", required = false) @RequestParam(value = "filename", required = false) String filename) {
         UUID userId = SecurityUtils.getAuthenticatedUserId();
         Optional<String> folderPathOpt = Optional.ofNullable(folderPath);
-        FileResponse response = fileService.upload(file, folderPathOpt, userId);
+        Optional<String> filenameOpt = Optional.ofNullable(filename);
+        FileResponse response = fileService.upload(file, folderPathOpt, filenameOpt, userId);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 

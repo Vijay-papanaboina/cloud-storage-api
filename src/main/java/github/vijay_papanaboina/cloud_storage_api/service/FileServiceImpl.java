@@ -47,7 +47,8 @@ public class FileServiceImpl implements FileService {
 
     @Override
     @Transactional
-    public FileResponse upload(MultipartFile file, Optional<String> folderPath, UUID userId) {
+    public FileResponse upload(MultipartFile file, Optional<String> folderPath, Optional<String> filename,
+            UUID userId) {
         log.info("Uploading file for user: userId={}, filename={}, size={}", userId, file.getOriginalFilename(),
                 file.getSize());
         // Validate userId is not null
@@ -104,13 +105,16 @@ public class FileServiceImpl implements FileService {
         // database
         String uuid = extractUuidFromPublicId(fullPublicId);
 
-        // Generate unique filename (UUID with extension)
+        // Use provided filename or original filename, then sanitize it
         String originalFilename = file.getOriginalFilename();
-        String extension = getFileExtension(originalFilename);
-        String filename = UUID.randomUUID().toString() + (extension != null ? "." + extension : "");
+        if (originalFilename == null || originalFilename.trim().isEmpty()) {
+            throw new BadRequestException("File original filename cannot be null or empty");
+        }
+        String filenameToUse = filename.orElse(originalFilename);
+        String sanitizedFilename = sanitizeFilename(filenameToUse);
 
         // Create File entity
-        File fileEntity = new File(filename, file.getContentType(), file.getSize(), user);
+        File fileEntity = new File(sanitizedFilename, file.getContentType(), file.getSize(), user);
         fileEntity.setFolderPath(normalizedFolderPath); // Store user's original path (without userId prefix)
         fileEntity.setCloudinaryPublicId(uuid); // Store only UUID (userId prefix is added when needed)
         fileEntity.setCloudinaryUrl(cloudinaryUrl);
@@ -119,8 +123,8 @@ public class FileServiceImpl implements FileService {
 
         // Save to database
         File savedFile = fileRepository.save(fileEntity);
-        log.info("File uploaded successfully: fileId={}, userId={}, cloudinaryPath={}, uuid={}",
-                savedFile.getId(), userId, fullPublicId, uuid);
+        log.info("File uploaded successfully: fileId={}, userId={}, filename={}, cloudinaryPath={}, uuid={}",
+                savedFile.getId(), userId, sanitizedFilename, fullPublicId, uuid);
 
         return toFileResponse(savedFile);
     }
@@ -912,6 +916,68 @@ public class FileServiceImpl implements FileService {
         response.setCreatedAt(file.getCreatedAt());
         response.setUpdatedAt(file.getUpdatedAt());
         return response;
+    }
+
+    /**
+     * Sanitize filename to prevent security issues
+     * Removes path separators, null bytes, control characters, and validates
+     * against reserved names
+     * 
+     * @param filename Filename to sanitize
+     * @return Sanitized filename
+     * @throws BadRequestException if filename is invalid
+     */
+    private String sanitizeFilename(String filename) {
+        if (filename == null || filename.trim().isEmpty()) {
+            throw new BadRequestException("Filename cannot be null or empty");
+        }
+
+        // Remove leading/trailing whitespace
+        String sanitized = filename.trim();
+
+        // Remove path separators (prevent path traversal)
+        sanitized = sanitized.replace("/", "_").replace("\\", "_");
+
+        // Remove null bytes
+        sanitized = sanitized.replace("\0", "");
+
+        // Remove control characters (including tab, newline, carriage return)
+        // Only allow printable characters (code >= 32)
+        StringBuilder sb = new StringBuilder();
+        for (char c : sanitized.toCharArray()) {
+            if (c >= 32) {
+                sb.append(c);
+            }
+        }
+        sanitized = sb.toString();
+
+        // Validate against reserved names (Windows)
+        String upperName = sanitized.toUpperCase();
+        String[] reservedNames = { "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
+                "COM8", "COM9",
+                "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9" };
+        for (String reserved : reservedNames) {
+            if (upperName.equals(reserved) || upperName.startsWith(reserved + ".")) {
+                throw new BadRequestException("Filename cannot be a reserved name: " + reserved);
+            }
+        }
+
+        // Validate against special names
+        if (sanitized.equals(".") || sanitized.equals("..")) {
+            throw new BadRequestException("Filename cannot be '.' or '..'");
+        }
+
+        // Ensure filename is not empty after sanitization
+        if (sanitized.isEmpty()) {
+            throw new BadRequestException("Filename cannot be empty after sanitization");
+        }
+
+        // Limit filename length (reasonable limit)
+        if (sanitized.length() > 255) {
+            throw new BadRequestException("Filename cannot exceed 255 characters");
+        }
+
+        return sanitized;
     }
 
     /**

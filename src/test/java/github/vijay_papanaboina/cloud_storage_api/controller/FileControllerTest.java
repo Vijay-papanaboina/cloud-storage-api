@@ -72,7 +72,8 @@ class FileControllerTest {
 
         try (MockedStatic<SecurityUtils> securityUtilsMock = mockStatic(SecurityUtils.class)) {
             securityUtilsMock.when(SecurityUtils::getAuthenticatedUserId).thenReturn(userId);
-            when(fileService.upload(any(), eq(Optional.empty()), eq(userId))).thenReturn(response);
+            when(fileService.upload(any(), eq(Optional.empty()), eq(Optional.empty()), eq(userId)))
+                    .thenReturn(response);
 
             // When/Then
             mockMvc.perform(multipart("/api/files/upload")
@@ -82,7 +83,7 @@ class FileControllerTest {
                     .andExpect(jsonPath("$.filename").value("test.txt"))
                     .andExpect(jsonPath("$.contentType").value("text/plain"));
 
-            verify(fileService, times(1)).upload(any(), eq(Optional.empty()), eq(userId));
+            verify(fileService, times(1)).upload(any(), eq(Optional.empty()), eq(Optional.empty()), eq(userId));
         }
     }
 
@@ -97,7 +98,8 @@ class FileControllerTest {
 
         try (MockedStatic<SecurityUtils> securityUtilsMock = mockStatic(SecurityUtils.class)) {
             securityUtilsMock.when(SecurityUtils::getAuthenticatedUserId).thenReturn(userId);
-            when(fileService.upload(any(), eq(Optional.of(folderPath)), eq(userId))).thenReturn(response);
+            when(fileService.upload(any(), eq(Optional.of(folderPath)), eq(Optional.empty()), eq(userId)))
+                    .thenReturn(response);
 
             // When/Then
             mockMvc.perform(multipart("/api/files/upload")
@@ -106,7 +108,7 @@ class FileControllerTest {
                     .andExpect(status().isCreated())
                     .andExpect(jsonPath("$.folderPath").value(folderPath));
 
-            verify(fileService, times(1)).upload(any(), eq(Optional.of(folderPath)), eq(userId));
+            verify(fileService, times(1)).upload(any(), eq(Optional.of(folderPath)), eq(Optional.empty()), eq(userId));
         }
     }
 
@@ -122,7 +124,7 @@ class FileControllerTest {
             mockMvc.perform(multipart("/api/files/upload"))
                     .andExpect(status().isInternalServerError());
 
-            verify(fileService, never()).upload(any(), any(), any());
+            verify(fileService, never()).upload(any(), any(), any(), any());
         }
     }
 
@@ -136,7 +138,7 @@ class FileControllerTest {
                 .file(file))
                 .andExpect(status().isUnauthorized());
 
-        verify(fileService, never()).upload(any(), any(), any());
+        verify(fileService, never()).upload(any(), any(), any(), any());
     }
 
     // GET /api/files tests

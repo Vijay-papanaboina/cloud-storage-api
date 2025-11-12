@@ -172,11 +172,7 @@ public class FolderServiceImpl implements FolderService {
 
         // Check if folder exists (by checking if any files have this folder path)
         long fileCount = fileRepository.countByUserIdAndFolderPathAndDeletedFalse(userId, normalizedPath);
-        if (fileCount == 0) {
-            log.warn("Folder not found: path={}, userId={}", normalizedPath, userId);
-            throw new ResourceNotFoundException("Folder not found: " + normalizedPath);
-        }
-
+        
         // Check if folder is non-empty
         if (fileCount > 0) {
             log.warn("Cannot delete non-empty folder: path={}, userId={}, fileCount={}",
@@ -185,7 +181,7 @@ public class FolderServiceImpl implements FolderService {
         }
 
         // Folder is virtual, so deletion means ensuring no files have this path
-        // Since we already checked fileCount == 0, the folder is effectively deleted
+        // If fileCount == 0, the folder is already effectively deleted (no files with this path)
         log.info("Folder deleted successfully: path={}, userId={}", normalizedPath, userId);
     }
 
@@ -207,12 +203,8 @@ public class FolderServiceImpl implements FolderService {
         String normalizedPath = normalizeFolderPath(path);
         validateFolderPath(normalizedPath);
 
-        // Check if folder exists
-        long fileCount = fileRepository.countByUserIdAndFolderPathAndDeletedFalse(userId, normalizedPath);
-        if (fileCount == 0) {
-            log.warn("Folder not found: path={}, userId={}", normalizedPath, userId);
-            throw new ResourceNotFoundException("Folder not found: " + normalizedPath);
-        }
+        // Note: Empty folders (fileCount == 0) are allowed - they may have been created via createFolder
+        // and will return statistics with 0 files, 0 size, etc.
 
         // Get folder statistics from repository
         Map<String, Object> stats = fileRepository.getFolderStatisticsByUserIdAndFolderPath(userId, normalizedPath);

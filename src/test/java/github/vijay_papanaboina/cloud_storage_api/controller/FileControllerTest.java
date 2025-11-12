@@ -2,6 +2,7 @@ package github.vijay_papanaboina.cloud_storage_api.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import github.vijay_papanaboina.cloud_storage_api.dto.*;
+import github.vijay_papanaboina.cloud_storage_api.exception.BadRequestException;
 import github.vijay_papanaboina.cloud_storage_api.exception.ResourceNotFoundException;
 import github.vijay_papanaboina.cloud_storage_api.security.JwtTokenProvider;
 import github.vijay_papanaboina.cloud_storage_api.security.SecurityUtils;
@@ -114,6 +115,145 @@ class FileControllerTest {
 
     @Test
     @WithMockUser
+    void uploadFile_InvalidFolderPath_PathTraversal_Returns400() throws Exception {
+        // Given
+        MockMultipartFile file = createTestMultipartFile("test.txt");
+        String invalidPath = "/../etc"; // Path traversal attempt
+
+        try (MockedStatic<SecurityUtils> securityUtilsMock = mockStatic(SecurityUtils.class)) {
+            securityUtilsMock.when(SecurityUtils::getAuthenticatedUserId).thenReturn(userId);
+            when(fileService.upload(any(), eq(Optional.of(invalidPath)), eq(Optional.empty()), eq(userId)))
+                    .thenThrow(
+                            new BadRequestException("Folder path normalization failed due to path traversal attempt"));
+
+            // When/Then
+            mockMvc.perform(multipart("/api/files/upload")
+                    .file(file)
+                    .param("folderPath", invalidPath))
+                    .andExpect(status().isBadRequest());
+
+            verify(fileService, times(1)).upload(any(), eq(Optional.of(invalidPath)), eq(Optional.empty()), eq(userId));
+        }
+    }
+
+    @Test
+    @WithMockUser
+    void uploadFile_InvalidFolderPath_Backslash_Returns400() throws Exception {
+        // Given
+        MockMultipartFile file = createTestMultipartFile("test.txt");
+        String invalidPath = "\\windows\\path"; // Windows-style path
+
+        try (MockedStatic<SecurityUtils> securityUtilsMock = mockStatic(SecurityUtils.class)) {
+            securityUtilsMock.when(SecurityUtils::getAuthenticatedUserId).thenReturn(userId);
+            when(fileService.upload(any(), eq(Optional.of(invalidPath)), eq(Optional.empty()), eq(userId)))
+                    .thenThrow(new BadRequestException(
+                            "Folder path must use Unix-style format with forward slashes only"));
+
+            // When/Then
+            mockMvc.perform(multipart("/api/files/upload")
+                    .file(file)
+                    .param("folderPath", invalidPath))
+                    .andExpect(status().isBadRequest());
+
+            verify(fileService, times(1)).upload(any(), eq(Optional.of(invalidPath)), eq(Optional.empty()), eq(userId));
+        }
+    }
+
+    @Test
+    @WithMockUser
+    void uploadFile_InvalidFilename_WithPathSeparator_Returns400() throws Exception {
+        // Given
+        MockMultipartFile file = createTestMultipartFile("test.txt");
+        String invalidFilename = "../malicious.txt"; // Contains path separator
+
+        try (MockedStatic<SecurityUtils> securityUtilsMock = mockStatic(SecurityUtils.class)) {
+            securityUtilsMock.when(SecurityUtils::getAuthenticatedUserId).thenReturn(userId);
+            when(fileService.upload(any(), eq(Optional.empty()), eq(Optional.of(invalidFilename)), eq(userId)))
+                    .thenThrow(new BadRequestException("Filename cannot be set to a value containing path separators"));
+
+            // When/Then
+            mockMvc.perform(multipart("/api/files/upload")
+                    .file(file)
+                    .param("filename", invalidFilename))
+                    .andExpect(status().isBadRequest());
+
+            verify(fileService, times(1)).upload(any(), eq(Optional.empty()), eq(Optional.of(invalidFilename)),
+                    eq(userId));
+        }
+    }
+
+    @Test
+    @WithMockUser
+    void uploadFile_InvalidFilename_Empty_Returns400() throws Exception {
+        // Given
+        MockMultipartFile file = createTestMultipartFile("test.txt");
+        String invalidFilename = ""; // Empty filename
+
+        try (MockedStatic<SecurityUtils> securityUtilsMock = mockStatic(SecurityUtils.class)) {
+            securityUtilsMock.when(SecurityUtils::getAuthenticatedUserId).thenReturn(userId);
+            when(fileService.upload(any(), eq(Optional.empty()), eq(Optional.of(invalidFilename)), eq(userId)))
+                    .thenThrow(new BadRequestException("Filename cannot be null or empty"));
+
+            // When/Then
+            mockMvc.perform(multipart("/api/files/upload")
+                    .file(file)
+                    .param("filename", invalidFilename))
+                    .andExpect(status().isBadRequest());
+
+            verify(fileService, times(1)).upload(any(), eq(Optional.empty()), eq(Optional.of(invalidFilename)),
+                    eq(userId));
+        }
+    }
+
+    @Test
+    @WithMockUser
+    void uploadFile_InvalidFilename_ReservedName_Returns400() throws Exception {
+        // Given
+        MockMultipartFile file = createTestMultipartFile("test.txt");
+        String invalidFilename = "CON.txt"; // Windows reserved name
+
+        try (MockedStatic<SecurityUtils> securityUtilsMock = mockStatic(SecurityUtils.class)) {
+            securityUtilsMock.when(SecurityUtils::getAuthenticatedUserId).thenReturn(userId);
+            when(fileService.upload(any(), eq(Optional.empty()), eq(Optional.of(invalidFilename)), eq(userId)))
+                    .thenThrow(new BadRequestException("Filename cannot be a reserved name: CON"));
+
+            // When/Then
+            mockMvc.perform(multipart("/api/files/upload")
+                    .file(file)
+                    .param("filename", invalidFilename))
+                    .andExpect(status().isBadRequest());
+
+            verify(fileService, times(1)).upload(any(), eq(Optional.empty()), eq(Optional.of(invalidFilename)),
+                    eq(userId));
+        }
+    }
+
+    @Test
+    @WithMockUser
+    void uploadFile_NullOriginalFilename_Returns400() throws Exception {
+        // Given
+        MockMultipartFile file = new MockMultipartFile(
+                "file",
+                null, // null filename
+                "text/plain",
+                "Test file content".getBytes());
+
+        try (MockedStatic<SecurityUtils> securityUtilsMock = mockStatic(SecurityUtils.class)) {
+            securityUtilsMock.when(SecurityUtils::getAuthenticatedUserId).thenReturn(userId);
+            when(fileService.upload(any(), eq(Optional.empty()), eq(Optional.empty()), eq(userId)))
+                    .thenThrow(new BadRequestException("File original filename cannot be null or empty"));
+
+            // When/Then
+            mockMvc.perform(multipart("/api/files/upload")
+                    .file(file))
+                    .andExpect(status().isBadRequest());
+
+            verify(fileService, times(1)).upload(any(), eq(Optional.empty()), eq(Optional.empty()), eq(userId));
+        }
+    }
+
+    @Test
+    @WithMockUser
     void uploadFile_MissingFile_Returns500() throws Exception {
         try (MockedStatic<SecurityUtils> securityUtilsMock = mockStatic(SecurityUtils.class)) {
             securityUtilsMock.when(SecurityUtils::getAuthenticatedUserId).thenReturn(userId);
@@ -191,6 +331,48 @@ class FileControllerTest {
 
             verify(fileService, times(1)).list(any(), eq(Optional.of(contentType)), eq(Optional.of(folderPath)),
                     eq(userId));
+        }
+    }
+
+    @Test
+    @WithMockUser
+    void listFiles_InvalidFolderPath_PathTraversal_Returns400() throws Exception {
+        // Given
+        String invalidPath = "/../etc"; // Path traversal attempt
+
+        try (MockedStatic<SecurityUtils> securityUtilsMock = mockStatic(SecurityUtils.class)) {
+            securityUtilsMock.when(SecurityUtils::getAuthenticatedUserId).thenReturn(userId);
+            when(fileService.list(any(), eq(Optional.empty()), eq(Optional.of(invalidPath)), eq(userId)))
+                    .thenThrow(
+                            new BadRequestException("Folder path normalization failed due to path traversal attempt"));
+
+            // When/Then
+            mockMvc.perform(get("/api/files")
+                    .param("folderPath", invalidPath))
+                    .andExpect(status().isBadRequest());
+
+            verify(fileService, times(1)).list(any(), eq(Optional.empty()), eq(Optional.of(invalidPath)), eq(userId));
+        }
+    }
+
+    @Test
+    @WithMockUser
+    void listFiles_InvalidFolderPath_Backslash_Returns400() throws Exception {
+        // Given
+        String invalidPath = "\\windows\\path"; // Windows-style path
+
+        try (MockedStatic<SecurityUtils> securityUtilsMock = mockStatic(SecurityUtils.class)) {
+            securityUtilsMock.when(SecurityUtils::getAuthenticatedUserId).thenReturn(userId);
+            when(fileService.list(any(), eq(Optional.empty()), eq(Optional.of(invalidPath)), eq(userId)))
+                    .thenThrow(new BadRequestException(
+                            "Folder path must use Unix-style format with forward slashes only"));
+
+            // When/Then
+            mockMvc.perform(get("/api/files")
+                    .param("folderPath", invalidPath))
+                    .andExpect(status().isBadRequest());
+
+            verify(fileService, times(1)).list(any(), eq(Optional.empty()), eq(Optional.of(invalidPath)), eq(userId));
         }
     }
 
@@ -509,6 +691,55 @@ class FileControllerTest {
 
     @Test
     @WithMockUser
+    void updateFile_InvalidFolderPath_PathTraversal_Returns400() throws Exception {
+        // Given
+        String invalidPath = "/../etc"; // Path traversal attempt
+        FileUpdateRequest request = createTestFileUpdateRequest(null, invalidPath);
+
+        try (MockedStatic<SecurityUtils> securityUtilsMock = mockStatic(SecurityUtils.class)) {
+            securityUtilsMock.when(SecurityUtils::getAuthenticatedUserId).thenReturn(userId);
+            when(fileService.update(eq(fileId), any(FileUpdateRequest.class), eq(userId)))
+                    .thenThrow(
+                            new BadRequestException("Folder path normalization failed due to path traversal attempt"));
+
+            // When/Then
+            mockMvc.perform(put("/api/files/{id}", fileId)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isBadRequest());
+
+            verify(fileService, times(1)).update(eq(fileId), any(FileUpdateRequest.class), eq(userId));
+        }
+    }
+
+    @Test
+    @WithMockUser
+    void updateFile_InvalidFolderPath_Backslash_Returns400() throws Exception {
+        // Given
+        String invalidPath = "\\windows\\path"; // Windows-style path
+        FileUpdateRequest request = createTestFileUpdateRequest(null, invalidPath);
+
+        try (MockedStatic<SecurityUtils> securityUtilsMock = mockStatic(SecurityUtils.class)) {
+            securityUtilsMock.when(SecurityUtils::getAuthenticatedUserId).thenReturn(userId);
+
+            // When/Then
+            // DTO validation (@Pattern) rejects paths that don't start with '/'
+            // So the service is never called - validation happens at DTO level
+            mockMvc.perform(put("/api/files/{id}", fileId)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"))
+                    .andExpect(jsonPath("$.details[0].field").value("folderPath"))
+                    .andExpect(jsonPath("$.details[0].message").value("Folder path must start with '/' if provided"));
+
+            // Service should not be called because DTO validation fails first
+            verify(fileService, never()).update(any(), any(), any());
+        }
+    }
+
+    @Test
+    @WithMockUser
     void updateFile_NotFound_Returns404() throws Exception {
         // Given
         FileUpdateRequest request = createTestFileUpdateRequest("new-filename.txt", null);
@@ -771,6 +1002,54 @@ class FileControllerTest {
 
             verify(fileService, times(1)).search(eq(query), eq(Optional.of(contentType)),
                     eq(Optional.of(folderPath)), any(), eq(userId));
+        }
+    }
+
+    @Test
+    @WithMockUser
+    void searchFiles_InvalidFolderPath_PathTraversal_Returns400() throws Exception {
+        // Given
+        String query = "test";
+        String invalidPath = "/../etc"; // Path traversal attempt
+
+        try (MockedStatic<SecurityUtils> securityUtilsMock = mockStatic(SecurityUtils.class)) {
+            securityUtilsMock.when(SecurityUtils::getAuthenticatedUserId).thenReturn(userId);
+            when(fileService.search(eq(query), eq(Optional.empty()), eq(Optional.of(invalidPath)), any(), eq(userId)))
+                    .thenThrow(
+                            new BadRequestException("Folder path normalization failed due to path traversal attempt"));
+
+            // When/Then
+            mockMvc.perform(get("/api/files/search")
+                    .param("q", query)
+                    .param("folderPath", invalidPath))
+                    .andExpect(status().isBadRequest());
+
+            verify(fileService, times(1)).search(eq(query), eq(Optional.empty()), eq(Optional.of(invalidPath)), any(),
+                    eq(userId));
+        }
+    }
+
+    @Test
+    @WithMockUser
+    void searchFiles_InvalidFolderPath_Backslash_Returns400() throws Exception {
+        // Given
+        String query = "test";
+        String invalidPath = "\\windows\\path"; // Windows-style path
+
+        try (MockedStatic<SecurityUtils> securityUtilsMock = mockStatic(SecurityUtils.class)) {
+            securityUtilsMock.when(SecurityUtils::getAuthenticatedUserId).thenReturn(userId);
+            when(fileService.search(eq(query), eq(Optional.empty()), eq(Optional.of(invalidPath)), any(), eq(userId)))
+                    .thenThrow(new BadRequestException(
+                            "Folder path must use Unix-style format with forward slashes only"));
+
+            // When/Then
+            mockMvc.perform(get("/api/files/search")
+                    .param("q", query)
+                    .param("folderPath", invalidPath))
+                    .andExpect(status().isBadRequest());
+
+            verify(fileService, times(1)).search(eq(query), eq(Optional.empty()), eq(Optional.of(invalidPath)), any(),
+                    eq(userId));
         }
     }
 

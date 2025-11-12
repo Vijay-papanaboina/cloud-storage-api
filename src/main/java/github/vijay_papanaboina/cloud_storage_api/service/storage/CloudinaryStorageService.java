@@ -11,20 +11,67 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.net.HttpURLConnection;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import jakarta.annotation.PreDestroy;
 
 @Service
 public class CloudinaryStorageService implements StorageService {
     private static final Logger log = LoggerFactory.getLogger(CloudinaryStorageService.class);
     private static final long MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
+    private static final long CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes TTL for resource type cache
 
     private final Cloudinary cloudinary;
+    // Thread-safe cache for resource type lookups: publicId -> CacheEntry
+    private final ConcurrentHashMap<String, CacheEntry> resourceTypeCache = new ConcurrentHashMap<>();
+    // Thread-safe metrics tracking for resource type success counts: resourceType
+    // -> success count
+    private final ConcurrentHashMap<String, Long> resourceTypeSuccessMetrics = new ConcurrentHashMap<>();
+    // Dedicated thread pool for offloading blocking download I/O operations
+    private final ExecutorService downloadExecutor = Executors.newFixedThreadPool(10);
 
     @Autowired
     public CloudinaryStorageService(Cloudinary cloudinary) {
         this.cloudinary = cloudinary;
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        downloadExecutor.shutdown();
+        try {
+            if (!downloadExecutor.awaitTermination(60, TimeUnit.SECONDS)) {
+                downloadExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            downloadExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
+     * Cache entry for resource type with timestamp for TTL-based eviction
+     */
+    private static class CacheEntry {
+        final String resourceType;
+        final long timestamp;
+
+        CacheEntry(String resourceType, long timestamp) {
+            this.resourceType = resourceType;
+            this.timestamp = timestamp;
+        }
+
+        boolean isExpired(long ttlMs) {
+            return System.currentTimeMillis() - timestamp > ttlMs;
+        }
     }
 
     @Override
@@ -104,52 +151,172 @@ public class CloudinaryStorageService implements StorageService {
 
     @Override
     public byte[] downloadFile(String publicId) {
+        // Offload blocking I/O to dedicated thread pool to avoid blocking request
+        // threads
+        // This prevents thread pool exhaustion under concurrent load
+        CompletableFuture<byte[]> future = CompletableFuture.supplyAsync(
+                () -> downloadFileInternal(publicId),
+                downloadExecutor);
+
         try {
-            // Get resource details to determine resource type for authenticated resources
-            Map<String, Object> resourceDetails = getResourceDetails(publicId, null);
-            String resourceType = (String) resourceDetails.get("resource_type");
+            // Wait for download with timeout (max 2 minutes: 3 types × 40s timeout)
+            return future.get(2, TimeUnit.MINUTES);
+        } catch (java.util.concurrent.TimeoutException e) {
+            future.cancel(true);
+            log.error("Download timeout for publicId={}", publicId);
+            throw new StorageException("Download timeout: file download exceeded maximum time limit", e);
+        } catch (java.util.concurrent.ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof StorageException) {
+                throw (StorageException) cause;
+            }
+            log.error("Unexpected error during file download: publicId={}, error={}", publicId, cause.getMessage(),
+                    cause);
+            throw new StorageException("Failed to download file: " + cause.getMessage(), cause);
+        } catch (InterruptedException e) {
+            future.cancel(true);
+            Thread.currentThread().interrupt();
+            log.error("Download interrupted for publicId={}", publicId);
+            throw new StorageException("Download interrupted", e);
+        }
+    }
 
-            // Build signed authenticated URL for resources uploaded with
-            // type="authenticated"
-            com.cloudinary.Url urlBuilder = cloudinary.url()
-                    .secure(true)
-                    .signed(true)
-                    .type("authenticated");
+    /**
+     * Internal download method that performs the actual blocking I/O.
+     * This method is executed on a dedicated thread pool to avoid blocking request
+     * threads.
+     */
+    private byte[] downloadFileInternal(String publicId) {
+        try {
+            // Try to resolve resource type using cached helper
+            String resolvedResourceType = resolveResourceType(publicId);
 
-            // Include resourceType if needed (not "auto" or null)
-            if (resourceType != null && !resourceType.isEmpty() && !resourceType.equals("auto")) {
-                urlBuilder.resourceType(resourceType);
+            // If resolved, try downloading with that type first
+            if (resolvedResourceType != null) {
+                try {
+                    byte[] fileBytes = downloadFileWithResourceType(publicId, resolvedResourceType);
+                    // Cache successful resource type
+                    resourceTypeCache.put(publicId, new CacheEntry(resolvedResourceType, System.currentTimeMillis()));
+                    log.info("File downloaded successfully from Cloudinary: publicId={}, resourceType={}",
+                            publicId, resolvedResourceType);
+                    return fileBytes;
+                } catch (Exception e) {
+                    // If download fails with resolved type, fall through to fallback loop
+                    log.debug(
+                            "Download failed with resolved resourceType={}, falling back to iteration: publicId={}, error={}",
+                            resolvedResourceType, publicId, e.getMessage());
+                }
             }
 
-            String url = urlBuilder.generate(publicId);
-            java.net.URI uri = java.net.URI.create(url);
-            java.net.URL fileUrl = uri.toURL();
-            try (java.io.InputStream inputStream = fileUrl.openStream();
+            // Fallback: Try common resource types: raw, image, video
+            // Note: Order may be suboptimal if most resources are of a different type
+            String[] resourceTypes = { "raw", "image", "video" };
+            Exception lastException = null;
+
+            for (String resourceType : resourceTypes) {
+                try {
+                    byte[] fileBytes = downloadFileWithResourceType(publicId, resourceType);
+                    // Cache successful resource type for future requests
+                    resourceTypeCache.put(publicId, new CacheEntry(resourceType, System.currentTimeMillis()));
+                    log.info("File downloaded successfully from Cloudinary: publicId={}, resourceType={}",
+                            publicId, resourceType);
+                    return fileBytes;
+                } catch (java.io.FileNotFoundException e) {
+                    // If file not found with this resource type, try next one
+                    lastException = e;
+                    log.debug("Failed to download with resourceType={}, trying next: publicId={}, error={}",
+                            resourceType, publicId, e.getMessage());
+                    continue;
+                } catch (java.net.HttpRetryException e) {
+                    // HTTP retry exception - try next resource type
+                    lastException = e;
+                    log.debug("HTTP retry error with resourceType={}, trying next: publicId={}, error={}", resourceType,
+                            publicId, e.getMessage());
+                    continue;
+                } catch (java.net.UnknownHostException e) {
+                    // Network error - don't try other types, fail immediately
+                    log.error("Network error during download: publicId={}, error={}", publicId, e.getMessage());
+                    throw new StorageException("Network error during file download: " + e.getMessage(), e);
+                } catch (IOException e) {
+                    // Check if it's an HTTP error (404, 403, etc.)
+                    String errorMsg = e.getMessage();
+                    if (errorMsg != null && (errorMsg.contains("404") || errorMsg.contains("403")
+                            || errorMsg.contains("Server returned HTTP response code"))) {
+                        // HTTP error - try next resource type
+                        lastException = e;
+                        log.debug("HTTP error with resourceType={}, trying next: publicId={}, error={}", resourceType,
+                                publicId, e.getMessage());
+                        continue;
+                    }
+                    // For other IO errors, try next resource type
+                    lastException = e;
+                    log.debug("IO error with resourceType={}, trying next: publicId={}, error={}", resourceType,
+                            publicId, e.getMessage());
+                    continue;
+                } catch (Exception e) {
+                    // Other exceptions - try next resource type
+                    lastException = e;
+                    log.debug("Error with resourceType={}, trying next: publicId={}, error={}", resourceType,
+                            publicId, e.getMessage());
+                    continue;
+                }
+            }
+
+            // If all resource types failed, throw exception
+            if (lastException != null) {
+                log.error("Failed to download file from Cloudinary with any resource type: publicId={}", publicId);
+                throw new StorageException("Failed to download file from Cloudinary: " + lastException.getMessage(),
+                        lastException);
+            }
+
+            // Should not reach here, but add fallback
+            throw new StorageException("Failed to download file from Cloudinary: unable to determine resource type");
+        } catch (StorageException e) {
+            // Re-throw StorageException as-is
+            throw e;
+        } catch (Exception e) {
+            log.error("Unexpected error during file download: publicId={}, error={}",
+                    publicId, e.getMessage(), e);
+            throw new StorageException("Unexpected error during file download", e);
+        }
+    }
+
+    /**
+     * Downloads a file with a specific resource type.
+     * This method performs blocking I/O and should be called from a dedicated
+     * thread pool.
+     */
+    private byte[] downloadFileWithResourceType(String publicId, String resourceType) throws IOException {
+        com.cloudinary.Url urlBuilder = cloudinary.url()
+                .secure(true)
+                .signed(true)
+                .type("authenticated")
+                .resourceType(resourceType);
+
+        String url = urlBuilder.generate(publicId);
+        java.net.URI uri = java.net.URI.create(url);
+        java.net.URL fileUrl = uri.toURL();
+        HttpURLConnection connection = (HttpURLConnection) fileUrl.openConnection();
+        try {
+            // Set reasonable timeouts (10s connect, 30s read)
+            connection.setConnectTimeout(10000);
+            connection.setReadTimeout(30000);
+            int responseCode = connection.getResponseCode();
+            if (responseCode != 200) {
+                throw new IOException("HTTP error: " + responseCode);
+            }
+
+            try (java.io.InputStream inputStream = connection.getInputStream();
                     java.io.ByteArrayOutputStream outputStream = new java.io.ByteArrayOutputStream()) {
                 byte[] buffer = new byte[4096];
                 int bytesRead;
                 while ((bytesRead = inputStream.read(buffer)) != -1) {
                     outputStream.write(buffer, 0, bytesRead);
                 }
-                byte[] fileBytes = outputStream.toByteArray();
-                log.info("File downloaded successfully from Cloudinary: publicId={}", publicId);
-                return fileBytes;
+                return outputStream.toByteArray();
             }
-        } catch (java.net.MalformedURLException e) {
-            log.error("Invalid URL for file download: publicId={}, error={}",
-                    publicId, e.getMessage(), e);
-            throw new StorageException("Failed to generate download URL", e);
-        } catch (java.io.FileNotFoundException e) {
-            log.error("File not found in Cloudinary: publicId={}", publicId);
-            throw new StorageException("File not found in Cloudinary: " + publicId, e);
-        } catch (IOException e) {
-            log.error("Failed to download file from Cloudinary: publicId={}, error={}",
-                    publicId, e.getMessage(), e);
-            throw new StorageException("Failed to download file from Cloudinary", e);
-        } catch (Exception e) {
-            log.error("Unexpected error during file download: publicId={}, error={}",
-                    publicId, e.getMessage(), e);
-            throw new StorageException("Unexpected error during file download", e);
+        } finally {
+            connection.disconnect();
         }
     }
 
@@ -241,30 +408,83 @@ public class CloudinaryStorageService implements StorageService {
     @Override
     public String getFileUrl(String publicId, boolean secure) {
         try {
-            // Get resource details to determine resource type for authenticated resources
-            Map<String, Object> resourceDetails = getResourceDetails(publicId, null);
-            String resourceType = (String) resourceDetails.get("resource_type");
+            // Generate URL without blocking Admin API call for performance
+            // Try multiple resource types in order (image, video, raw) and return the first
+            // URL generated
+            // This avoids blocking network I/O during URL generation, which is expected to
+            // be a fast, local operation
+            // IMPORTANT: The returned URL is NOT VALIDATED and may be invalid (404) if the
+            // guessed resource type is incorrect. Callers MUST handle 404 errors.
+            // The order (image, video, raw) may be suboptimal if most resources are raw
+            // files.
+            // When resource type is known, use getFileUrl(publicId, secure, resourceType)
+            // instead.
+            String[] resourceTypes = { "image", "video", "raw" };
 
-            // Build signed authenticated URL for resources uploaded with
-            // type="authenticated"
-            com.cloudinary.Url urlBuilder = cloudinary.url()
-                    .secure(secure)
-                    .signed(true)
-                    .type("authenticated");
+            for (String type : resourceTypes) {
+                try {
+                    // Build signed authenticated URL for resources uploaded with
+                    // type="authenticated"
+                    com.cloudinary.Url urlBuilder = cloudinary.url()
+                            .secure(secure)
+                            .signed(true)
+                            .type("authenticated")
+                            .resourceType(type);
 
-            // Include resourceType if needed (not "auto" or null)
-            if (resourceType != null && !resourceType.isEmpty() && !resourceType.equals("auto")) {
-                urlBuilder.resourceType(resourceType);
+                    String url = urlBuilder.generate(publicId);
+                    log.debug(
+                            "Generated signed URL (unvalidated) for authenticated resource: publicId={}, resourceType={}, secure={}",
+                            publicId, type, secure);
+                    // Return first URL generated - caller MUST handle 404s if incorrect
+                    return url;
+                } catch (Exception e) {
+                    // If URL generation fails for this type, try next
+                    log.debug("Failed to generate URL with resourceType={}, trying next: publicId={}, error={}", type,
+                            publicId, e.getMessage());
+                    continue;
+                }
             }
 
-            String url = urlBuilder.generate(publicId);
-
-            log.info("Generated signed URL for authenticated resource: publicId={}, resourceType={}, secure={}",
-                    publicId, resourceType, secure);
-            return url;
+            // If all resource types failed to generate URL, throw exception
+            log.error("Failed to generate URL for any resource type: publicId={}", publicId);
+            throw new StorageException("Failed to generate Cloudinary URL: unable to determine resource type");
+        } catch (StorageException e) {
+            // Re-throw StorageException as-is
+            throw e;
         } catch (Exception e) {
             log.error("Failed to generate signed Cloudinary URL: publicId={}, error={}",
                     publicId, e.getMessage(), e);
+            throw new StorageException("Failed to generate Cloudinary URL", e);
+        }
+    }
+
+    @Override
+    public String getFileUrl(String publicId, boolean secure, String resourceType) {
+        try {
+            // Validate resource type
+            if (resourceType == null || resourceType.trim().isEmpty() || resourceType.equals("auto")) {
+                throw new IllegalArgumentException(
+                        "Resource type must not be null, empty, or 'auto'. Provided: " + resourceType);
+            }
+
+            // Generate URL with known resource type - no guessing, no blocking Admin API
+            // calls
+            com.cloudinary.Url urlBuilder = cloudinary.url()
+                    .secure(secure)
+                    .signed(true)
+                    .type("authenticated")
+                    .resourceType(resourceType);
+
+            String url = urlBuilder.generate(publicId);
+            log.debug("Generated signed URL for authenticated resource: publicId={}, resourceType={}, secure={}",
+                    publicId, resourceType, secure);
+            return url;
+        } catch (IllegalArgumentException e) {
+            // Re-throw IllegalArgumentException as-is
+            throw e;
+        } catch (Exception e) {
+            log.error("Failed to generate signed Cloudinary URL: publicId={}, resourceType={}, error={}",
+                    publicId, resourceType, e.getMessage(), e);
             throw new StorageException("Failed to generate Cloudinary URL", e);
         }
     }
@@ -335,15 +555,78 @@ public class CloudinaryStorageService implements StorageService {
         try {
             // If resourceType is provided, use it directly
             if (resourceType != null && !resourceType.isEmpty() && !resourceType.equals("auto")) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> resource = (Map<String, Object>) cloudinary.api().resource(publicId,
-                        ObjectUtils.asMap("resource_type", resourceType));
-                log.debug("Resource found with specified resource_type: publicId={}, resourceType={}", publicId,
-                        resourceType);
-                return resource;
+                // Try with type="authenticated" first, then without if that fails
+                Map<String, Object> apiOptions = new HashMap<>();
+                apiOptions.put("resource_type", resourceType);
+                apiOptions.put("type", "authenticated");
+                try {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> resource = (Map<String, Object>) cloudinary.api().resource(publicId,
+                            apiOptions);
+                    log.debug(
+                            "Resource found with specified resource_type and type=authenticated: publicId={}, resourceType={}",
+                            publicId,
+                            resourceType);
+                    return resource;
+                } catch (Exception e) {
+                    // If not found with type="authenticated", try without it
+                    if (e.getMessage() != null && e.getMessage().contains("not found")) {
+                        log.debug("Resource not found with type=authenticated, trying without type: publicId={}",
+                                publicId);
+                        apiOptions.remove("type");
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> resource = (Map<String, Object>) cloudinary.api().resource(publicId,
+                                apiOptions);
+                        log.debug("Resource found without type parameter: publicId={}, resourceType={}", publicId,
+                                resourceType);
+                        return resource;
+                    }
+                    throw e;
+                }
             }
 
-            // If resourceType is not provided or is "auto", iterate over resource types
+            // If resourceType is not provided or is "auto", try to resolve using cached
+            // helper
+            String resolvedResourceType = resolveResourceType(publicId);
+
+            // If resolved, use it to get resource details
+            if (resolvedResourceType != null) {
+                try {
+                    Map<String, Object> apiOptions = new HashMap<>();
+                    apiOptions.put("resource_type", resolvedResourceType);
+                    apiOptions.put("type", "authenticated");
+                    try {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> resource = (Map<String, Object>) cloudinary.api().resource(publicId,
+                                apiOptions);
+                        log.debug(
+                                "Resource found with resolved resource_type and type=authenticated: publicId={}, resourceType={}",
+                                publicId, resolvedResourceType);
+                        return resource;
+                    } catch (Exception e) {
+                        // If not found with type="authenticated", try without it
+                        if (e.getMessage() != null && e.getMessage().contains("not found")) {
+                            log.debug("Resource not found with type=authenticated, trying without type: publicId={}",
+                                    publicId);
+                            apiOptions.remove("type");
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> resource = (Map<String, Object>) cloudinary.api().resource(publicId,
+                                    apiOptions);
+                            log.debug("Resource found without type parameter: publicId={}, resourceType={}", publicId,
+                                    resolvedResourceType);
+                            return resource;
+                        }
+                        throw e;
+                    }
+                } catch (Exception e) {
+                    // If resolved type fails, fall through to fallback loop
+                    log.debug(
+                            "Resource details fetch failed with resolved resourceType={}, falling back to iteration: publicId={}, error={}",
+                            resolvedResourceType, publicId, e.getMessage());
+                }
+            }
+
+            // Fallback: Iterate over resource types
             // Try common resource types: image, video, raw (auto is not valid for Admin
             // API)
             String[] resourceTypes = { "image", "video", "raw" };
@@ -351,17 +634,42 @@ public class CloudinaryStorageService implements StorageService {
 
             for (String type : resourceTypes) {
                 try {
+                    // Try with type="authenticated" first
+                    Map<String, Object> apiOptions = new HashMap<>();
+                    apiOptions.put("resource_type", type);
+                    apiOptions.put("type", "authenticated");
                     @SuppressWarnings("unchecked")
                     Map<String, Object> resource = (Map<String, Object>) cloudinary.api().resource(publicId,
-                            ObjectUtils.asMap("resource_type", type));
-                    log.debug("Resource found by iterating resource types: publicId={}, resourceType={}", publicId,
+                            apiOptions);
+                    log.debug(
+                            "Resource found by iterating resource types with type=authenticated: publicId={}, resourceType={}",
+                            publicId,
                             type);
                     return resource;
                 } catch (Exception e) {
-                    // If it's a "not found" error, try the next resource type
+                    // If it's a "not found" error, try without type parameter
                     if (e.getMessage() != null && e.getMessage().contains("not found")) {
-                        lastException = e;
-                        continue;
+                        try {
+                            Map<String, Object> apiOptions = new HashMap<>();
+                            apiOptions.put("resource_type", type);
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> resource = (Map<String, Object>) cloudinary.api().resource(publicId,
+                                    apiOptions);
+                            log.debug(
+                                    "Resource found by iterating resource types without type parameter: publicId={}, resourceType={}",
+                                    publicId, type);
+                            return resource;
+                        } catch (Exception e2) {
+                            // If still not found, try next resource type
+                            if (e2.getMessage() != null && e2.getMessage().contains("not found")) {
+                                lastException = e2;
+                                continue;
+                            }
+                            // For other errors, log and rethrow
+                            log.error("Error getting resource details with resource_type={}: publicId={}, error={}",
+                                    type, publicId, e2.getMessage(), e2);
+                            throw new StorageException("Failed to get resource details from Cloudinary", e2);
+                        }
                     }
                     // For other errors, log and rethrow
                     log.error("Error getting resource details with resource_type={}: publicId={}, error={}",
@@ -449,6 +757,47 @@ public class CloudinaryStorageService implements StorageService {
         return moveFile(currentPublicId, newFolderPath, null);
     }
 
+    /**
+     * Move a file to a different folder in Cloudinary by renaming its public ID.
+     * <p>
+     * <strong>Non-Transactional Operation:</strong> This operation is NOT
+     * transactional.
+     * If the rename succeeds but downstream operations fail, no automatic rollback
+     * is
+     * performed. The file will remain in its new location even if subsequent
+     * operations
+     * fail. Callers should implement their own compensation logic if needed.
+     * <p>
+     * <strong>Performance Optimizations:</strong>
+     * <ul>
+     * <li>Checks a thread-safe in-memory cache before attempting API calls to avoid
+     * unnecessary network requests</li>
+     * <li>Uses metrics-based ordering to try the most-likely resource type first,
+     * reducing latency</li>
+     * <li>Caches successful resource type resolutions for future operations</li>
+     * </ul>
+     * <p>
+     * <strong>Compensation on Failure:</strong> If downstream operations fail after
+     * a
+     * successful rename, callers can implement compensation by calling this method
+     * again
+     * with the new and original public IDs reversed. However, this is not automatic
+     * and
+     * must be implemented by the caller.
+     *
+     * @param currentPublicId Current public ID (may include folder path)
+     * @param newFolderPath   New folder path (null or empty means root folder)
+     * @param resourceType    Optional resource type (image, video, raw). If null or
+     *                        "auto", will attempt to resolve from cache or Admin
+     *                        API.
+     *                        Falls back to trying all resource types in
+     *                        metrics-based
+     *                        order.
+     * @return Map containing the updated Cloudinary response with new public_id and
+     *         resource_type
+     * @throws StorageException if the file cannot be moved (e.g., file not found,
+     *                          rename fails with all resource types)
+     */
     @Override
     public Map<String, Object> moveFile(String currentPublicId, String newFolderPath, String resourceType) {
         try {
@@ -479,56 +828,182 @@ public class CloudinaryStorageService implements StorageService {
                 newPublicId = filename;
             }
 
-            // Determine the actual resource type if not provided
-            // Cloudinary rename API requires a valid resource_type: image, raw, or video
-            // (not "auto")
+            // Try to resolve resource type using cached helper if not provided
             String actualResourceType = resourceType;
             if (actualResourceType == null || actualResourceType.isEmpty() || actualResourceType.equals("auto")) {
-                // Get resource details to determine the actual resource type
-                Map<String, Object> currentResourceDetails = getResourceDetails(currentPublicId, null);
-                actualResourceType = (String) currentResourceDetails.get("resource_type");
+                actualResourceType = resolveResourceType(currentPublicId);
+            }
 
-                // Handle "auto" or missing resource_type by inferring from format
-                if (actualResourceType == null || actualResourceType.isEmpty() || actualResourceType.equals("auto")) {
-                    String format = (String) currentResourceDetails.get("format");
-                    if (format != null && !format.isEmpty()) {
-                        actualResourceType = inferResourceTypeFromFormat(format);
+            // If we have a resolved resource type, try it first
+            if (actualResourceType != null && !actualResourceType.isEmpty() && !actualResourceType.equals("auto")) {
+                try {
+                    Map<String, Object> renameOptions = new HashMap<>();
+                    renameOptions.put("resource_type", actualResourceType);
+                    renameOptions.put("type", "authenticated");
+
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> renameResult = cloudinary.uploader().rename(currentPublicId, newPublicId,
+                            renameOptions);
+
+                    String resultValue = renameResult.get("result") != null ? renameResult.get("result").toString()
+                            : "";
+                    if ("ok".equals(resultValue)) {
+                        // Store successful resource type in cache for future operations
+                        String cacheKey = currentPublicId;
+                        resourceTypeCache.put(cacheKey, new CacheEntry(actualResourceType, System.currentTimeMillis()));
+                        // Also cache the new public ID with the same resource type
+                        resourceTypeCache.put(newPublicId,
+                                new CacheEntry(actualResourceType, System.currentTimeMillis()));
+
+                        // Emit metric/counter for successful resource type
+                        resourceTypeSuccessMetrics.compute(actualResourceType, (k, v) -> (v == null) ? 1L : v + 1L);
+
+                        Map<String, Object> resourceDetails = new HashMap<>();
+                        resourceDetails.put("public_id", newPublicId);
+                        resourceDetails.put("resource_type", actualResourceType);
                         log.info(
-                                "Inferred resource_type from format for rename: currentPublicId={}, format={}, resourceType={}",
-                                currentPublicId, format, actualResourceType);
-                    } else {
-                        // If format is also missing, throw exception
-                        log.error(
-                                "Cannot determine resource type for rename: resource_type is 'auto' and format is missing: publicId={}",
-                                currentPublicId);
-                        throw new StorageException(
-                                "Cannot determine resource type for rename: resource_type is 'auto' and format is missing for publicId: "
-                                        + currentPublicId);
+                                "File moved successfully in Cloudinary: currentPublicId={}, newPublicId={}, resourceType={}, successCount={}",
+                                currentPublicId, newPublicId, actualResourceType,
+                                resourceTypeSuccessMetrics.get(actualResourceType));
+                        return resourceDetails;
                     }
+                } catch (Exception e) {
+                    // If rename fails with resolved type, fall through to fallback loop
+                    log.debug(
+                            "Rename failed with resolved resourceType={}, falling back to iteration: currentPublicId={}, error={}",
+                            actualResourceType, currentPublicId, e.getMessage());
                 }
             }
 
-            // Use Cloudinary rename API to move the file
-            // Note: rename API only accepts: image, raw, or video (not "auto")
-            Map<String, Object> renameOptions = new HashMap<>();
-            renameOptions.put("resource_type", actualResourceType);
+            // Fallback: Try rename operation with different resource types until one
+            // succeeds
+            // Check cache first - if we have a cached type, try it before the
+            // metrics-ordered loop
+            String cacheKey = currentPublicId;
+            CacheEntry cached = resourceTypeCache.get(cacheKey);
+            if (cached != null && !cached.isExpired(CACHE_TTL_MS)) {
+                String cachedType = cached.resourceType;
+                log.debug("Found cached resource type, trying first: publicId={}, resourceType={}", cacheKey,
+                        cachedType);
+                try {
+                    Map<String, Object> renameOptions = new HashMap<>();
+                    renameOptions.put("resource_type", cachedType);
+                    renameOptions.put("type", "authenticated");
 
-            @SuppressWarnings("unchecked")
-            Map<String, Object> result = cloudinary.uploader().rename(currentPublicId, newPublicId, renameOptions);
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> renameResult = cloudinary.uploader().rename(currentPublicId, newPublicId,
+                            renameOptions);
 
-            String resultValue = result.get("result") != null ? result.get("result").toString() : "";
-            if (!"ok".equals(resultValue)) {
-                log.error(
-                        "Failed to move file in Cloudinary: currentPublicId={}, newPublicId={}, resourceType={}, result={}",
-                        currentPublicId, newPublicId, actualResourceType, resultValue);
-                throw new StorageException("Failed to move file in Cloudinary: " + resultValue);
+                    String resultValue = renameResult.get("result") != null ? renameResult.get("result").toString()
+                            : "";
+                    if ("ok".equals(resultValue)) {
+                        // Store successful resource type in cache for future operations
+                        resourceTypeCache.put(cacheKey, new CacheEntry(cachedType, System.currentTimeMillis()));
+                        // Also cache the new public ID with the same resource type
+                        resourceTypeCache.put(newPublicId, new CacheEntry(cachedType, System.currentTimeMillis()));
+
+                        // Emit metric/counter for successful resource type
+                        resourceTypeSuccessMetrics.compute(cachedType, (k, v) -> (v == null) ? 1L : v + 1L);
+                        log.info(
+                                "File moved successfully in Cloudinary using cached type: currentPublicId={}, newPublicId={}, resourceType={}, successCount={}",
+                                currentPublicId, newPublicId, cachedType,
+                                resourceTypeSuccessMetrics.get(cachedType));
+
+                        Map<String, Object> resourceDetails = new HashMap<>();
+                        resourceDetails.put("public_id", newPublicId);
+                        resourceDetails.put("resource_type", cachedType);
+                        return resourceDetails;
+                    }
+                } catch (Exception e) {
+                    // If cached type fails, fall through to metrics-ordered loop
+                    log.debug(
+                            "Rename failed with cached resourceType={}, falling back to metrics-ordered iteration: currentPublicId={}, error={}",
+                            cachedType, currentPublicId, e.getMessage());
+                }
             }
 
-            // Get updated resource details with new URLs, using the determined resourceType
-            Map<String, Object> resourceDetails = getResourceDetails(newPublicId, actualResourceType);
+            // Get resource types ordered by success metrics (most likely first)
+            String[] resourceTypes = getOrderedResourceTypes();
+            Exception lastException = null;
+            Map<String, Object> result = null;
+            String successfulResourceType = null;
 
-            log.info("File moved successfully in Cloudinary: currentPublicId={}, newPublicId={}, resourceType={}",
-                    currentPublicId, newPublicId, actualResourceType);
+            // Try rename with each resource type until one succeeds
+            for (String type : resourceTypes) {
+                // Skip if we already tried this type from cache
+                if (cached != null && !cached.isExpired(CACHE_TTL_MS) && cached.resourceType.equals(type)) {
+                    log.debug("Skipping resourceType={} as it was already tried from cache: publicId={}", type,
+                            cacheKey);
+                    continue;
+                }
+
+                try {
+                    // Use Cloudinary rename API to move the file
+                    // Note: rename API only accepts: image, raw, or video (not "auto")
+                    Map<String, Object> renameOptions = new HashMap<>();
+                    renameOptions.put("resource_type", type);
+                    renameOptions.put("type", "authenticated"); // Required for authenticated resources
+
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> renameResult = cloudinary.uploader().rename(currentPublicId, newPublicId,
+                            renameOptions);
+
+                    String resultValue = renameResult.get("result") != null ? renameResult.get("result").toString()
+                            : "";
+                    if ("ok".equals(resultValue)) {
+                        result = renameResult;
+                        successfulResourceType = type;
+
+                        // Store successful resource type in cache for future operations
+                        resourceTypeCache.put(cacheKey, new CacheEntry(type, System.currentTimeMillis()));
+                        // Also cache the new public ID with the same resource type
+                        resourceTypeCache.put(newPublicId, new CacheEntry(type, System.currentTimeMillis()));
+
+                        // Emit metric/counter for successful resource type
+                        resourceTypeSuccessMetrics.compute(type, (k, v) -> (v == null) ? 1L : v + 1L);
+                        log.info(
+                                "File moved successfully in Cloudinary: currentPublicId={}, newPublicId={}, resourceType={}, successCount={}",
+                                currentPublicId, newPublicId, type,
+                                resourceTypeSuccessMetrics.get(type));
+
+                        break;
+                    } else {
+                        log.debug("Rename failed with resourceType={}, result={}: currentPublicId={}, newPublicId={}",
+                                type, resultValue, currentPublicId, newPublicId);
+                        lastException = new StorageException("Failed to move file in Cloudinary: " + resultValue);
+                    }
+                } catch (Exception e) {
+                    // If rename fails, try next resource type
+                    lastException = e;
+                    log.debug("Rename failed with resourceType={}, trying next: currentPublicId={}, error={}",
+                            type, currentPublicId, e.getMessage());
+                    continue;
+                }
+            }
+
+            // If all resource types failed, throw exception
+            if (result == null || successfulResourceType == null) {
+                log.error(
+                        "Failed to move file in Cloudinary with any resource type: currentPublicId={}, newPublicId={}",
+                        currentPublicId, newPublicId);
+                if (lastException != null) {
+                    throw new StorageException("Failed to move file in Cloudinary: " + lastException.getMessage(),
+                            lastException);
+                } else {
+                    throw new StorageException("Failed to move file in Cloudinary: all resource types failed");
+                }
+            }
+
+            // For authenticated resources, we can't use Admin API to get updated resource
+            // details
+            // Return the rename result which contains the new public_id
+            // The URLs will be regenerated when needed using getFileUrl()
+            Map<String, Object> resourceDetails = new HashMap<>();
+            resourceDetails.put("public_id", newPublicId);
+            resourceDetails.put("resource_type", successfulResourceType);
+            // Note: URL fields may not be available for authenticated resources via rename
+            // API
+            // They will be generated on-demand using getFileUrl()
 
             return resourceDetails;
         } catch (StorageException e) {
@@ -539,6 +1014,78 @@ public class CloudinaryStorageService implements StorageService {
                     currentPublicId, newFolderPath, resourceType, e.getMessage(), e);
             throw new StorageException("Failed to move file in Cloudinary", e);
         }
+    }
+
+    /**
+     * Resolves the resource type for a given publicId by checking cache first,
+     * then calling Admin API if needed. Caches the result with TTL.
+     * 
+     * @param publicId The public ID of the resource
+     * @return The resolved resource type ("image", "video", or "raw"), or null if
+     *         unresolved
+     */
+    private String resolveResourceType(String publicId) {
+        // Check cache first
+        CacheEntry cached = resourceTypeCache.get(publicId);
+        if (cached != null && !cached.isExpired(CACHE_TTL_MS)) {
+            log.debug("Resource type cache hit: publicId={}, resourceType={}", publicId, cached.resourceType);
+            return cached.resourceType;
+        }
+
+        // Cache miss or expired - call Admin API directly
+        // Try common resource types: image, video, raw
+        String[] resourceTypes = { "image", "video", "raw" };
+
+        for (String type : resourceTypes) {
+            try {
+                // Try with type="authenticated" first
+                Map<String, Object> apiOptions = new HashMap<>();
+                apiOptions.put("resource_type", type);
+                apiOptions.put("type", "authenticated");
+                @SuppressWarnings("unchecked")
+                Map<String, Object> resource = (Map<String, Object>) cloudinary.api().resource(publicId, apiOptions);
+                String resourceType = (String) resource.get("resource_type");
+
+                // Ignore "auto" - it's not a valid resource type for API calls
+                if (resourceType != null && !resourceType.isEmpty() && !resourceType.equals("auto")) {
+                    // Cache the result
+                    resourceTypeCache.put(publicId, new CacheEntry(resourceType, System.currentTimeMillis()));
+                    log.debug("Resource type resolved and cached: publicId={}, resourceType={}", publicId,
+                            resourceType);
+                    return resourceType;
+                }
+            } catch (Exception e) {
+                // If it's a "not found" error, try without type parameter
+                if (e.getMessage() != null && e.getMessage().contains("not found")) {
+                    try {
+                        Map<String, Object> apiOptions = new HashMap<>();
+                        apiOptions.put("resource_type", type);
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> resource = (Map<String, Object>) cloudinary.api().resource(publicId,
+                                apiOptions);
+                        String resourceType = (String) resource.get("resource_type");
+
+                        if (resourceType != null && !resourceType.isEmpty() && !resourceType.equals("auto")) {
+                            // Cache the result
+                            resourceTypeCache.put(publicId, new CacheEntry(resourceType, System.currentTimeMillis()));
+                            log.debug("Resource type resolved and cached: publicId={}, resourceType={}", publicId,
+                                    resourceType);
+                            return resourceType;
+                        }
+                    } catch (Exception e2) {
+                        // Continue to next resource type
+                        continue;
+                    }
+                }
+                // For other errors, continue to next resource type
+                continue;
+            }
+        }
+
+        // All resource types failed - log debug and return null to trigger fallback
+        log.debug("Admin API failed to resolve resource type for any type, returning null for fallback: publicId={}",
+                publicId);
+        return null;
     }
 
     /**
@@ -574,6 +1121,62 @@ public class CloudinaryStorageService implements StorageService {
 
         // Default to "raw" for other formats (PDF, documents, etc.)
         return "raw";
+    }
+
+    /**
+     * Returns resource types ordered by success metrics (most likely to succeed
+     * first).
+     * This method uses collected metrics to optimize the order of resource type
+     * attempts,
+     * reducing latency by trying the most successful types first.
+     * <p>
+     * If no metrics are available, returns the default order: ["raw", "image",
+     * "video"].
+     *
+     * @return Array of resource types ordered by success metrics (descending)
+     */
+    private String[] getOrderedResourceTypes() {
+        // Default order if no metrics available
+        String[] defaultOrder = { "raw", "image", "video" };
+
+        // If metrics are empty, return default order
+        if (resourceTypeSuccessMetrics.isEmpty()) {
+            return defaultOrder;
+        }
+
+        // Sort resource types by success count (descending)
+        // Create a list of entries and sort by value
+        List<Map.Entry<String, Long>> entries = new ArrayList<>(
+                resourceTypeSuccessMetrics.entrySet());
+        entries.sort((e1, e2) -> Long.compare(e2.getValue(), e1.getValue()));
+
+        // Extract ordered resource types
+        String[] orderedTypes = new String[defaultOrder.length];
+        int index = 0;
+
+        // Add types from metrics (in order of success)
+        for (Map.Entry<String, Long> entry : entries) {
+            if (index < orderedTypes.length) {
+                orderedTypes[index++] = entry.getKey();
+            }
+        }
+
+        // Fill remaining slots with default types not in metrics
+        for (String defaultType : defaultOrder) {
+            boolean found = false;
+            for (int i = 0; i < index; i++) {
+                if (orderedTypes[i].equals(defaultType)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found && index < orderedTypes.length) {
+                orderedTypes[index++] = defaultType;
+            }
+        }
+
+        log.debug("Resource types ordered by metrics: {}", java.util.Arrays.toString(orderedTypes));
+        return orderedTypes;
     }
 
 }

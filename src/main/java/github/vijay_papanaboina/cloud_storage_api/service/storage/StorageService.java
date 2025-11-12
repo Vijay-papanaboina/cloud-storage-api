@@ -79,14 +79,65 @@ public interface StorageService {
 
     /**
      * Generate Cloudinary CDN URL
+     * <p>
+     * This method generates a signed URL for authenticated resources by trying
+     * multiple resource types (image, video, raw) in order and returning the first
+     * URL generated. This avoids blocking network I/O during URL generation, which
+     * is expected to be a fast, local operation.
+     * <p>
+     * <strong>Performance Note:</strong> This method does NOT perform Admin API
+     * calls to determine resource type, avoiding blocking network I/O that could
+     * degrade performance and exhaust thread pools when invoked frequently.
+     * <p>
+     * <strong>Important Contract:</strong> The returned URL is <strong>NOT
+     * VALIDATED</strong> and may be invalid (404) if the guessed resource type is
+     * incorrect. <strong>All callers MUST handle 404 errors</strong> appropriately
+     * when using the URL. The method tries resource types in a fixed order (image,
+     * video, raw), which may be suboptimal if most resources are of a different
+     * type.
+     * <p>
+     * <strong>Recommended:</strong> When the resource type is known, use
+     * {@link #getFileUrl(String, boolean, String)} instead, which accepts the
+     * resource type as a parameter and generates the correct URL without guessing.
+     * Alternatively, use {@link #generateSignedDownloadUrl(String, int, String)}
+     * which accepts a resource type parameter and performs validation.
      *
      * @param publicId Cloudinary public ID
      * @param secure   Use HTTPS URL
-     * @return Cloudinary CDN URL (non-null on success)
+     * @return Cloudinary CDN URL (non-null on success, but <strong>may return 404
+     *         if resource type is incorrect</strong> - callers must handle this)
      * @throws StorageException if the URL cannot be generated due to invalid
-     *                          publicId or other errors
+     *                          publicId, if no valid resource type can be
+     *                          determined,
+     *                          or if other errors occur
      */
     String getFileUrl(String publicId, boolean secure);
+
+    /**
+     * Generate Cloudinary CDN URL with known resource type
+     * <p>
+     * This method generates a signed URL for authenticated resources using the
+     * provided resource type. This is the preferred method when the resource type
+     * is known, as it avoids guessing and generates the correct URL immediately.
+     * <p>
+     * <strong>Performance Note:</strong> This method does NOT perform Admin API
+     * calls, making it a fast, local operation suitable for frequent invocation.
+     * <p>
+     * <strong>Important:</strong> The returned URL is generated based on the
+     * provided resource type without validation. If the resource type is incorrect,
+     * the URL may be invalid (404). However, this is more reliable than
+     * {@link #getFileUrl(String, boolean)} when the resource type is known.
+     *
+     * @param publicId     Cloudinary public ID
+     * @param secure       Use HTTPS URL
+     * @param resourceType Resource type (image, video, or raw). Must not be null,
+     *                     empty, or "auto"
+     * @return Cloudinary CDN URL (non-null on success)
+     * @throws IllegalArgumentException if resourceType is null, empty, or "auto"
+     * @throws StorageException         if the URL cannot be generated due to
+     *                                  invalid publicId or other errors
+     */
+    String getFileUrl(String publicId, boolean secure, String resourceType);
 
     /**
      * Generate a signed download URL for a file

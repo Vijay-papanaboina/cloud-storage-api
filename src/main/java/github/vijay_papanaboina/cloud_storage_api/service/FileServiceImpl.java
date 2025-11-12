@@ -11,6 +11,7 @@ import github.vijay_papanaboina.cloud_storage_api.repository.BatchJobRepository;
 import github.vijay_papanaboina.cloud_storage_api.repository.FileRepository;
 import github.vijay_papanaboina.cloud_storage_api.repository.UserRepository;
 import github.vijay_papanaboina.cloud_storage_api.service.storage.StorageService;
+import github.vijay_papanaboina.cloud_storage_api.validation.SafeFolderPathValidator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -59,6 +60,24 @@ public class FileServiceImpl implements FileService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new NotFoundException("User not found: " + userId, userId));
 
+        // Validate original filename early (before storage service call)
+        String originalFilename = file.getOriginalFilename();
+        if (originalFilename == null || originalFilename.trim().isEmpty()) {
+            throw new BadRequestException("File original filename cannot be null or empty");
+        }
+
+        // Validate custom filename early if provided (before storage service call)
+        String filenameToUse = filename.orElse(originalFilename);
+        if (filename.isPresent()) {
+            // Validate custom filename early - check for path separators first
+            if (filenameToUse.contains("/") || filenameToUse.contains("\\")) {
+                throw new BadRequestException("Filename cannot be set to a value containing path separators");
+            }
+            // Validate other filename constraints - sanitizeFilename throws
+            // BadRequestException for invalid filenames
+            sanitizeFilename(filenameToUse);
+        }
+
         // Normalize folderPath and convert to String for StorageService
         String normalizedFolderPath = optionalToString(normalizeOptionalString(folderPath));
         // Validate folder path format
@@ -105,12 +124,7 @@ public class FileServiceImpl implements FileService {
         // database
         String uuid = extractUuidFromPublicId(fullPublicId);
 
-        // Use provided filename or original filename, then sanitize it
-        String originalFilename = file.getOriginalFilename();
-        if (originalFilename == null || originalFilename.trim().isEmpty()) {
-            throw new BadRequestException("File original filename cannot be null or empty");
-        }
-        String filenameToUse = filename.orElse(originalFilename);
+        // Sanitize filename (validation already done earlier, this just sanitizes)
         String sanitizedFilename = sanitizeFilename(filenameToUse);
 
         // Create File entity
@@ -257,6 +271,11 @@ public class FileServiceImpl implements FileService {
         Optional<String> normalizedContentType = normalizeOptionalString(contentType);
         Optional<String> normalizedFolderPath = normalizeOptionalString(folderPath);
 
+        // Validate folder path if provided
+        if (normalizedFolderPath.isPresent()) {
+            validateFolderPath(normalizedFolderPath.get());
+        }
+
         log.info("Listing files: userId={}, contentType={}, folderPath={}, page={}, size={}",
                 userId, normalizedContentType.orElse(null), normalizedFolderPath.orElse(null),
                 pageable.getPageNumber(), pageable.getPageSize());
@@ -323,27 +342,59 @@ public class FileServiceImpl implements FileService {
                 String currentFullPublicId = constructCloudinaryPublicId(userId, oldFolderPath,
                         file.getCloudinaryPublicId());
 
-                // Get resource type to pass to moveFile to avoid "not found" errors
-                String resourceType = null;
-                try {
-                    Map<String, Object> resourceDetails = storageService.getResourceDetails(currentFullPublicId);
-                    resourceType = (String) resourceDetails.get("resource_type");
-                } catch (Exception e) {
-                    log.warn("Could not get resource type before move, will use auto-detection: fileId={}, error={}",
-                            id, e.getMessage());
-                }
-
                 // Construct new Cloudinary folder path with userId prefix
                 String newCloudinaryFolderPath = constructCloudinaryFolderPath(userId, newFolderPath);
 
-                // Move file in Cloudinary to new folder, passing resourceType if available
+                // Move file in Cloudinary to new folder
+                // moveFile will try different resource types automatically for authenticated
+                // resources
                 Map<String, Object> moveResult = storageService.moveFile(currentFullPublicId, newCloudinaryFolderPath,
-                        resourceType);
+                        null);
 
-                // Extract updated public ID and URLs from Cloudinary response
+                // Validate moveResult and newFullPublicId
+                if (moveResult == null) {
+                    log.error("Move result is null after moving file: fileId={}, userId={}, oldFolder={}, newFolder={}",
+                            id, userId, oldFolderPath, newFolderPath);
+                    throw new StorageException("Move operation returned null result");
+                }
+
                 String newFullPublicId = (String) moveResult.get("public_id");
+                if (newFullPublicId == null || newFullPublicId.trim().isEmpty()) {
+                    log.error("Move result missing public_id: fileId={}, userId={}, oldFolder={}, newFolder={}",
+                            id, userId, oldFolderPath, newFolderPath);
+                    throw new StorageException("Move operation did not return a valid public_id");
+                }
+
+                // For authenticated resources, URLs may not be in moveResult
+                // Extract URLs from moveResult if present, otherwise they will be null
                 String newCloudinaryUrl = (String) moveResult.get("url");
                 String newCloudinarySecureUrl = (String) moveResult.get("secure_url");
+
+                // Regenerate URLs independently - only replace null URLs
+                // Do not fall back to old URLs as they may be invalid after move
+                if (newCloudinaryUrl == null) {
+                    try {
+                        newCloudinaryUrl = storageService.getFileUrl(newFullPublicId, false);
+                        log.debug("Regenerated HTTP URL after move: fileId={}, newPublicId={}", id, newFullPublicId);
+                    } catch (Exception e) {
+                        log.warn(
+                                "Could not generate HTTP URL after move, setting to null: fileId={}, newPublicId={}, error={}",
+                                id, newFullPublicId, e.getMessage());
+                        newCloudinaryUrl = null; // Set to null rather than using old URL
+                    }
+                }
+
+                if (newCloudinarySecureUrl == null) {
+                    try {
+                        newCloudinarySecureUrl = storageService.getFileUrl(newFullPublicId, true);
+                        log.debug("Regenerated HTTPS URL after move: fileId={}, newPublicId={}", id, newFullPublicId);
+                    } catch (Exception e) {
+                        log.warn(
+                                "Could not generate HTTPS URL after move, setting to null: fileId={}, newPublicId={}, error={}",
+                                id, newFullPublicId, e.getMessage());
+                        newCloudinarySecureUrl = null; // Set to null rather than using old URL
+                    }
+                }
 
                 // Update file metadata
                 // Extract just the UUID part from the new public_id (remove userId and folder
@@ -400,6 +451,11 @@ public class FileServiceImpl implements FileService {
         // Normalize optional parameters
         Optional<String> normalizedContentType = normalizeOptionalString(contentType);
         Optional<String> normalizedFolderPath = normalizeOptionalString(folderPath);
+
+        // Validate folder path if provided
+        if (normalizedFolderPath.isPresent()) {
+            validateFolderPath(normalizedFolderPath.get());
+        }
 
         log.info("Searching files: userId={}, query={}, contentType={}, folderPath={}",
                 userId, query, normalizedContentType.orElse(null), normalizedFolderPath.orElse(null));
@@ -528,9 +584,18 @@ public class FileServiceImpl implements FileService {
         String resourceType = (String) resourceDetails.get("resource_type");
 
         // Generate URL with error handling
+        // Use the known resource type to avoid guessing and potential 404s
         String url;
         try {
-            url = storageService.getFileUrl(fullPublicId, secure);
+            if (resourceType != null && !resourceType.isEmpty() && !resourceType.equals("auto")) {
+                // Use the known resource type for accurate URL generation
+                url = storageService.getFileUrl(fullPublicId, secure, resourceType);
+            } else {
+                // Fallback to guessing if resource type is unknown or "auto"
+                log.warn("Resource type is unknown or 'auto', using fallback URL generation: fileId={}, publicId={}",
+                        id, file.getCloudinaryPublicId());
+                url = storageService.getFileUrl(fullPublicId, secure);
+            }
         } catch (StorageException e) {
             // Re-throw StorageException as-is
             throw e;
@@ -1017,9 +1082,10 @@ public class FileServiceImpl implements FileService {
      */
     private void validateFolderPath(String folderPath) {
         if (folderPath != null && !folderPath.isEmpty()) {
-            if (!folderPath.startsWith("/")) {
-                throw new BadRequestException("Folder path must start with '/'");
-            }
+            // Use SafeFolderPathValidator to prevent path traversal attacks
+            SafeFolderPathValidator.validatePath(folderPath);
+
+            // Additional length check
             if (folderPath.length() > 500) {
                 throw new BadRequestException("Folder path must not exceed 500 characters");
             }

@@ -1,5 +1,6 @@
 package github.vijay_papanaboina.cloud_storage_api.validation;
 
+import github.vijay_papanaboina.cloud_storage_api.exception.BadRequestException;
 import jakarta.validation.ConstraintValidator;
 import jakarta.validation.ConstraintValidatorContext;
 
@@ -90,6 +91,89 @@ public class SafeFolderPathValidator implements ConstraintValidator<SafeFolderPa
      * @return the normalized path, or null if path traversal would escape root
      */
     private String normalizeUnixPath(String path) {
+        return normalizeUnixPathStatic(path);
+    }
+
+    /**
+     * Helper method to build a constraint violation with a custom message.
+     * 
+     * @param context the constraint validator context
+     * @param message the error message
+     * @return false (always returns false to indicate validation failure)
+     */
+    private boolean buildViolation(ConstraintValidatorContext context, String message) {
+        context.disableDefaultConstraintViolation();
+        context.buildConstraintViolationWithTemplate(message)
+                .addConstraintViolation();
+        return false;
+    }
+
+    /**
+     * Programmatically validate a folder path and throw BadRequestException if
+     * invalid.
+     * This method can be used outside of annotation-based validation contexts.
+     * 
+     * @param path the folder path to validate (null/empty paths are allowed and
+     *             will pass)
+     * @throws BadRequestException if the path is invalid
+     */
+    public static void validatePath(String path) {
+        if (path == null || path.isEmpty()) {
+            // Allow null/empty paths - let callers handle this if needed
+            return;
+        }
+
+        // Check for null characters
+        if (path.contains("\0")) {
+            throw new BadRequestException("Folder path must not contain null characters");
+        }
+
+        // Ensure Unix-style paths only (no backslashes)
+        if (path.contains("\\")) {
+            throw new BadRequestException("Folder path must use Unix-style format with forward slashes only");
+        }
+
+        // Must start with '/' for absolute virtual paths
+        if (!path.startsWith("/")) {
+            throw new BadRequestException("Folder path must start with '/' (absolute path required)");
+        }
+
+        // Check for invalid characters in path
+        if (path.matches(".*[<>:\"|?*].*")) {
+            throw new BadRequestException("Folder path contains invalid characters");
+        }
+
+        // Perform Unix-style path normalization and validate
+        String normalized = normalizeUnixPathStatic(path);
+
+        if (normalized == null) {
+            throw new BadRequestException("Folder path normalization failed due to path traversal attempt");
+        }
+
+        // After normalization, ensure it still starts with '/' (hasn't escaped root)
+        if (!normalized.startsWith("/")) {
+            throw new BadRequestException("Folder path cannot escape the root directory");
+        }
+
+        // Additional safety check: verify no ".." segments remain in the normalized
+        // path
+        String[] segments = normalized.split("/");
+        for (String segment : segments) {
+            if ("..".equals(segment)) {
+                throw new BadRequestException("Folder path contains invalid '..' segments");
+            }
+        }
+    }
+
+    /**
+     * Static version of normalizeUnixPath for use in validatePath method.
+     * Normalizes a Unix-style path by resolving "." and ".." segments.
+     * Returns null if the path attempts to escape the root directory.
+     * 
+     * @param path the path to normalize (must start with '/')
+     * @return the normalized path, or null if path traversal would escape root
+     */
+    private static String normalizeUnixPathStatic(String path) {
         if (path == null || !path.startsWith("/")) {
             return null;
         }
@@ -129,19 +213,5 @@ public class SafeFolderPathValidator implements ConstraintValidator<SafeFolderPa
         }
 
         return normalized.toString();
-    }
-
-    /**
-     * Helper method to build a constraint violation with a custom message.
-     * 
-     * @param context the constraint validator context
-     * @param message the error message
-     * @return false (always returns false to indicate validation failure)
-     */
-    private boolean buildViolation(ConstraintValidatorContext context, String message) {
-        context.disableDefaultConstraintViolation();
-        context.buildConstraintViolationWithTemplate(message)
-                .addConstraintViolation();
-        return false;
     }
 }

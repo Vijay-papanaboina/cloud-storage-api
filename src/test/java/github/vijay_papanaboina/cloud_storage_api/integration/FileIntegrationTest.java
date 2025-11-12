@@ -18,6 +18,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -68,14 +69,13 @@ class FileIntegrationTest extends BaseIntegrationTest {
                 // Then - verify file is saved in database
                 FileResponse response = objectMapper.readValue(
                                 result.getResponse().getContentAsString(), FileResponse.class);
-                // Verify filename is UUID-based with .txt extension
-                assertThat(response.getFilename()).endsWith(".txt");
-                assertThat(response.getFilename())
-                                .matches("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.txt$");
+                // Verify filename is preserved (implementation now preserves original filename
+                // instead of UUID)
+                assertThat(response.getFilename()).isEqualTo("test.txt");
 
                 Optional<File> savedFile = fileRepository.findById(response.getId());
                 assertThat(savedFile).isPresent();
-                assertThat(savedFile.get().getFilename()).endsWith(".txt"); // Filename is UUID-based with extension
+                assertThat(savedFile.get().getFilename()).isEqualTo("test.txt"); // Original filename is preserved
                 assertThat(savedFile.get().getUser().getId()).isEqualTo(user.getId());
         }
 
@@ -89,6 +89,8 @@ class FileIntegrationTest extends BaseIntegrationTest {
                 createTestFileInDatabase(user, "file3.txt", null);
 
                 // When & Then
+                // With PageSerializationMode.VIA_DTO, content stays at root but metadata is in
+                // page object
                 mockMvc.perform(get("/api/files")
                                 .header("Authorization", "Bearer " + accessToken)
                                 .param("page", "0")
@@ -96,7 +98,7 @@ class FileIntegrationTest extends BaseIntegrationTest {
                                 .andExpect(status().isOk())
                                 .andExpect(jsonPath("$.content").isArray())
                                 .andExpect(jsonPath("$.content.length()").value(3))
-                                .andExpect(jsonPath("$.totalElements").value(3));
+                                .andExpect(jsonPath("$.page.totalElements").value(3));
         }
 
         @Test
@@ -124,18 +126,17 @@ class FileIntegrationTest extends BaseIntegrationTest {
                 FileUpdateRequest updateRequest = new FileUpdateRequest("newname.txt", "/documents");
 
                 // Mock storage service calls for folder move
-                Map<String, Object> resourceDetails = new HashMap<>();
-                resourceDetails.put("resource_type", "raw");
                 // File has no folderPath (null), so expected path is userId/publicId
                 String currentFullPath = user.getId() + "/" + file.getCloudinaryPublicId();
                 String newCloudinaryPath = user.getId() + "/documents";
-                when(storageService.getResourceDetails(eq(currentFullPath))).thenReturn(resourceDetails);
 
                 Map<String, Object> moveResult = new HashMap<>();
                 moveResult.put("public_id", file.getCloudinaryPublicId());
                 moveResult.put("url", "https://res.cloudinary.com/test/image/upload/test.jpg");
                 moveResult.put("secure_url", "https://res.cloudinary.com/test/image/upload/test.jpg");
-                when(storageService.moveFile(eq(currentFullPath), eq(newCloudinaryPath), any(String.class)))
+                // moveFile now accepts null resourceType and handles resource type detection
+                // internally
+                when(storageService.moveFile(eq(currentFullPath), eq(newCloudinaryPath), isNull()))
                                 .thenReturn(moveResult);
 
                 // When
@@ -234,18 +235,154 @@ class FileIntegrationTest extends BaseIntegrationTest {
                                 .andExpect(status().isCreated());
 
                 // When & Then - invalid folder path (path traversal)
-                // Note: FileServiceImpl.validateFolderPath only checks if path starts with "/"
-                // and length,
-                // so path traversal like "/../etc" passes validation and reaches storage
-                // service, which fails (503)
-                // TODO: FileServiceImpl should use the same SafeFolderPathValidator as
-                // FolderService
+                // FileServiceImpl now uses SafeFolderPathValidator which rejects path traversal
+                // attempts, so this should return 400 Bad Request instead of 503
                 mockMvc.perform(multipart("/api/files/upload")
                                 .file(multipartFile)
                                 .param("folderPath", "/../etc")
                                 .header("Authorization", "Bearer " + accessToken))
-                                .andExpect(status().isServiceUnavailable()); // Storage service fails because path is
-                                                                             // invalid
+                                .andExpect(status().isBadRequest()); // Path traversal is now caught by validator
+
+                // When & Then - invalid folder path (backslash)
+                mockMvc.perform(multipart("/api/files/upload")
+                                .file(multipartFile)
+                                .param("folderPath", "\\windows\\path")
+                                .header("Authorization", "Bearer " + accessToken))
+                                .andExpect(status().isBadRequest());
+
+                // When & Then - invalid folder path (no leading slash)
+                mockMvc.perform(multipart("/api/files/upload")
+                                .file(multipartFile)
+                                .param("folderPath", "documents")
+                                .header("Authorization", "Bearer " + accessToken))
+                                .andExpect(status().isBadRequest());
+        }
+
+        @Test
+        void uploadFile_InvalidFilename_WithPathSeparator_ShouldReturn400() throws Exception {
+                // Given
+                User user = createTestUser("testuser", "test@example.com");
+                String accessToken = generateAccessToken(user);
+                MockMultipartFile multipartFile = new MockMultipartFile(
+                                "file", "test.txt", "text/plain", "test content".getBytes());
+
+                // When & Then - custom filename with path separator
+                mockMvc.perform(multipart("/api/files/upload")
+                                .file(multipartFile)
+                                .param("filename", "../malicious.txt")
+                                .header("Authorization", "Bearer " + accessToken))
+                                .andExpect(status().isBadRequest());
+        }
+
+        @Test
+        void uploadFile_InvalidFilename_Empty_ShouldReturn400() throws Exception {
+                // Given
+                User user = createTestUser("testuser", "test@example.com");
+                String accessToken = generateAccessToken(user);
+                MockMultipartFile multipartFile = new MockMultipartFile(
+                                "file", "test.txt", "text/plain", "test content".getBytes());
+
+                // When & Then - empty custom filename
+                mockMvc.perform(multipart("/api/files/upload")
+                                .file(multipartFile)
+                                .param("filename", "")
+                                .header("Authorization", "Bearer " + accessToken))
+                                .andExpect(status().isBadRequest());
+        }
+
+        @Test
+        void uploadFile_InvalidFilename_ReservedName_ShouldReturn400() throws Exception {
+                // Given
+                User user = createTestUser("testuser", "test@example.com");
+                String accessToken = generateAccessToken(user);
+                MockMultipartFile multipartFile = new MockMultipartFile(
+                                "file", "test.txt", "text/plain", "test content".getBytes());
+
+                // When & Then - Windows reserved name
+                mockMvc.perform(multipart("/api/files/upload")
+                                .file(multipartFile)
+                                .param("filename", "CON.txt")
+                                .header("Authorization", "Bearer " + accessToken))
+                                .andExpect(status().isBadRequest());
+        }
+
+        @Test
+        void uploadFile_NullOriginalFilename_ShouldReturn400() throws Exception {
+                // Given
+                User user = createTestUser("testuser", "test@example.com");
+                String accessToken = generateAccessToken(user);
+                MockMultipartFile multipartFile = new MockMultipartFile(
+                                "file", null, "text/plain", "test content".getBytes());
+
+                // When & Then - null original filename
+                mockMvc.perform(multipart("/api/files/upload")
+                                .file(multipartFile)
+                                .header("Authorization", "Bearer " + accessToken))
+                                .andExpect(status().isBadRequest());
+        }
+
+        @Test
+        void updateFile_InvalidFolderPath_ShouldReturn400() throws Exception {
+                // Given
+                User user = createTestUser("testuser", "test@example.com");
+                String accessToken = generateAccessToken(user);
+                File file = createTestFileInDatabase(user, "test.txt", "/documents");
+
+                // When & Then - path traversal in update
+                FileUpdateRequest updateRequest = new FileUpdateRequest(null, "/../etc");
+                mockMvc.perform(put("/api/files/" + file.getId())
+                                .header("Authorization", "Bearer " + accessToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(updateRequest)))
+                                .andExpect(status().isBadRequest());
+
+                // When & Then - backslash in update
+                updateRequest = new FileUpdateRequest(null, "\\windows\\path");
+                mockMvc.perform(put("/api/files/" + file.getId())
+                                .header("Authorization", "Bearer " + accessToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(updateRequest)))
+                                .andExpect(status().isBadRequest());
+        }
+
+        @Test
+        void listFiles_InvalidFolderPath_ShouldReturn400() throws Exception {
+                // Given
+                User user = createTestUser("testuser", "test@example.com");
+                String accessToken = generateAccessToken(user);
+
+                // When & Then - path traversal in list
+                mockMvc.perform(get("/api/files")
+                                .header("Authorization", "Bearer " + accessToken)
+                                .param("folderPath", "/../etc"))
+                                .andExpect(status().isBadRequest());
+
+                // When & Then - backslash in list
+                mockMvc.perform(get("/api/files")
+                                .header("Authorization", "Bearer " + accessToken)
+                                .param("folderPath", "\\windows\\path"))
+                                .andExpect(status().isBadRequest());
+        }
+
+        @Test
+        void searchFiles_InvalidFolderPath_ShouldReturn400() throws Exception {
+                // Given
+                User user = createTestUser("testuser", "test@example.com");
+                String accessToken = generateAccessToken(user);
+
+                // When & Then - path traversal in search
+                mockMvc.perform(get("/api/files/search")
+                                .header("Authorization", "Bearer " + accessToken)
+                                .param("q", "test")
+                                .param("folderPath", "/../etc"))
+                                .andExpect(status().isBadRequest());
+
+                // When & Then - backslash in search
+                mockMvc.perform(get("/api/files/search")
+                                .header("Authorization", "Bearer " + accessToken)
+                                .param("q", "test")
+                                .param("folderPath", "\\windows\\path"))
+                                .andExpect(status().isBadRequest());
         }
 
         @Test
@@ -272,14 +409,16 @@ class FileIntegrationTest extends BaseIntegrationTest {
                 }
 
                 // When & Then - first page
+                // With PageSerializationMode.VIA_DTO, content stays at root but metadata is in
+                // page object
                 mockMvc.perform(get("/api/files")
                                 .header("Authorization", "Bearer " + accessToken)
                                 .param("page", "0")
                                 .param("size", "10"))
                                 .andExpect(status().isOk())
                                 .andExpect(jsonPath("$.content.length()").value(10))
-                                .andExpect(jsonPath("$.totalElements").value(15))
-                                .andExpect(jsonPath("$.totalPages").value(2));
+                                .andExpect(jsonPath("$.page.totalElements").value(15))
+                                .andExpect(jsonPath("$.page.totalPages").value(2));
 
                 // When & Then - second page
                 mockMvc.perform(get("/api/files")
@@ -288,6 +427,6 @@ class FileIntegrationTest extends BaseIntegrationTest {
                                 .param("size", "10"))
                                 .andExpect(status().isOk())
                                 .andExpect(jsonPath("$.content.length()").value(5))
-                                .andExpect(jsonPath("$.totalElements").value(15));
+                                .andExpect(jsonPath("$.page.totalElements").value(15));
         }
 }

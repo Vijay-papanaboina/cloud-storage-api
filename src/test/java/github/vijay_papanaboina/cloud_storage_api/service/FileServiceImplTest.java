@@ -172,6 +172,63 @@ class FileServiceImplTest {
         }
 
         @Test
+        void upload_InvalidFolderPath_PathTraversal_ThrowsBadRequestException() {
+                // Given
+                MultipartFile multipartFile = createTestMultipartFile("test.txt");
+                String invalidPath = "/../etc"; // Path traversal attempt
+
+                when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
+
+                // When/Then
+                assertThatThrownBy(() -> fileService.upload(multipartFile, Optional.of(invalidPath), Optional.empty(),
+                                userId))
+                                .isInstanceOf(BadRequestException.class)
+                                .hasMessageContaining("path traversal");
+
+                verify(userRepository, times(1)).findById(userId);
+                verify(storageService, never()).uploadFile(any(), any(), any());
+                verify(fileRepository, never()).save(any());
+        }
+
+        @Test
+        void upload_InvalidFolderPath_Backslash_ThrowsBadRequestException() {
+                // Given
+                MultipartFile multipartFile = createTestMultipartFile("test.txt");
+                String invalidPath = "\\windows\\path"; // Windows-style path
+
+                when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
+
+                // When/Then
+                assertThatThrownBy(() -> fileService.upload(multipartFile, Optional.of(invalidPath), Optional.empty(),
+                                userId))
+                                .isInstanceOf(BadRequestException.class)
+                                .hasMessageContaining("Unix-style");
+
+                verify(userRepository, times(1)).findById(userId);
+                verify(storageService, never()).uploadFile(any(), any(), any());
+                verify(fileRepository, never()).save(any());
+        }
+
+        @Test
+        void upload_InvalidFolderPath_NoLeadingSlash_ThrowsBadRequestException() {
+                // Given
+                MultipartFile multipartFile = createTestMultipartFile("test.txt");
+                String invalidPath = "documents"; // Missing leading slash
+
+                when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
+
+                // When/Then
+                assertThatThrownBy(() -> fileService.upload(multipartFile, Optional.of(invalidPath), Optional.empty(),
+                                userId))
+                                .isInstanceOf(BadRequestException.class)
+                                .hasMessageContaining("start with '/'");
+
+                verify(userRepository, times(1)).findById(userId);
+                verify(storageService, never()).uploadFile(any(), any(), any());
+                verify(fileRepository, never()).save(any());
+        }
+
+        @Test
         void upload_InvalidFolderPath_ThrowsBadRequestException() {
                 // Given
                 MultipartFile multipartFile = createTestMultipartFile("test.txt");
@@ -613,6 +670,48 @@ class FileServiceImplTest {
         }
 
         @Test
+        void list_InvalidFolderPath_PathTraversal_ThrowsBadRequestException() {
+                // Given
+                Pageable pageable = PageRequest.of(0, 20);
+                String invalidPath = "/../etc"; // Path traversal attempt
+
+                // When/Then
+                assertThatThrownBy(() -> fileService.list(pageable, Optional.empty(), Optional.of(invalidPath), userId))
+                                .isInstanceOf(BadRequestException.class)
+                                .hasMessageContaining("path traversal");
+
+                verify(fileRepository, never()).findByUserIdAndDeletedFalse(any(), any());
+        }
+
+        @Test
+        void list_InvalidFolderPath_Backslash_ThrowsBadRequestException() {
+                // Given
+                Pageable pageable = PageRequest.of(0, 20);
+                String invalidPath = "\\windows\\path"; // Windows-style path
+
+                // When/Then
+                assertThatThrownBy(() -> fileService.list(pageable, Optional.empty(), Optional.of(invalidPath), userId))
+                                .isInstanceOf(BadRequestException.class)
+                                .hasMessageContaining("Unix-style");
+
+                verify(fileRepository, never()).findByUserIdAndDeletedFalse(any(), any());
+        }
+
+        @Test
+        void list_InvalidFolderPath_NoLeadingSlash_ThrowsBadRequestException() {
+                // Given
+                Pageable pageable = PageRequest.of(0, 20);
+                String invalidPath = "documents"; // Missing leading slash
+
+                // When/Then
+                assertThatThrownBy(() -> fileService.list(pageable, Optional.empty(), Optional.of(invalidPath), userId))
+                                .isInstanceOf(BadRequestException.class)
+                                .hasMessageContaining("start with '/'");
+
+                verify(fileRepository, never()).findByUserIdAndDeletedFalse(any(), any());
+        }
+
+        @Test
         void list_UserNotFound_ThrowsNotFoundException() {
                 // Given
                 Pageable pageable = PageRequest.of(0, 20);
@@ -671,8 +770,6 @@ class FileServiceImplTest {
                 // Given
                 String newFolderPath = "/photos";
                 FileUpdateRequest request = createTestFileUpdateRequest(null, newFolderPath);
-                Map<String, Object> resourceDetails = new HashMap<>();
-                resourceDetails.put("resource_type", "image");
                 Map<String, Object> moveResult = new HashMap<>();
                 moveResult.put("public_id", "new-public-id");
                 moveResult.put("url", "http://res.cloudinary.com/test/image/upload/new.jpg");
@@ -683,8 +780,9 @@ class FileServiceImplTest {
                 String newCloudinaryPath = getExpectedCloudinaryFolderPath(newFolderPath);
 
                 when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.of(testFile));
-                when(storageService.getResourceDetails(eq(currentFullPath))).thenReturn(resourceDetails);
-                when(storageService.moveFile(eq(currentFullPath), eq(newCloudinaryPath), eq("image")))
+                // moveFile now accepts null resourceType and handles resource type detection
+                // internally
+                when(storageService.moveFile(eq(currentFullPath), eq(newCloudinaryPath), isNull()))
                                 .thenReturn(moveResult);
                 when(fileRepository.save(any(File.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -696,8 +794,101 @@ class FileServiceImplTest {
                 assertThat(response.getFolderPath()).isEqualTo(newFolderPath);
 
                 verify(fileRepository, times(1)).findByIdAndUserId(fileId, userId);
-                verify(storageService, times(1)).moveFile(eq(currentFullPath), eq(newCloudinaryPath), eq("image"));
+                verify(storageService, times(1)).moveFile(eq(currentFullPath), eq(newCloudinaryPath), isNull());
                 verify(fileRepository, times(1)).save(any(File.class));
+        }
+
+        @Test
+        void update_Success_UpdatesFolderPath_WithNullUrls_RegeneratesUrls() {
+                // Given - Test URL regeneration when moveResult has null URLs
+                String newFolderPath = "/photos";
+                FileUpdateRequest request = createTestFileUpdateRequest(null, newFolderPath);
+                Map<String, Object> moveResult = new HashMap<>();
+                moveResult.put("public_id", "new-public-id");
+                // URLs are null - should trigger regeneration
+                moveResult.put("url", null);
+                moveResult.put("secure_url", null);
+
+                String currentFullPath = getExpectedCloudinaryPublicId(testFile.getFolderPath(),
+                                testFile.getCloudinaryPublicId());
+                String newCloudinaryPath = getExpectedCloudinaryFolderPath(newFolderPath);
+                String regeneratedHttpUrl = "http://res.cloudinary.com/test/image/upload/new.jpg";
+                String regeneratedHttpsUrl = "https://res.cloudinary.com/test/image/upload/new.jpg";
+
+                when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.of(testFile));
+                when(storageService.moveFile(eq(currentFullPath), eq(newCloudinaryPath), isNull()))
+                                .thenReturn(moveResult);
+                // getFileUrl should be called to regenerate URLs
+                when(storageService.getFileUrl(eq("new-public-id"), eq(false))).thenReturn(regeneratedHttpUrl);
+                when(storageService.getFileUrl(eq("new-public-id"), eq(true))).thenReturn(regeneratedHttpsUrl);
+                when(fileRepository.save(any(File.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+                // When
+                FileResponse response = fileService.update(fileId, request, userId);
+
+                // Then
+                assertThat(response).isNotNull();
+                assertThat(response.getFolderPath()).isEqualTo(newFolderPath);
+
+                verify(fileRepository, times(1)).findByIdAndUserId(fileId, userId);
+                verify(storageService, times(1)).moveFile(eq(currentFullPath), eq(newCloudinaryPath), isNull());
+                verify(storageService, times(1)).getFileUrl(eq("new-public-id"), eq(false));
+                verify(storageService, times(1)).getFileUrl(eq("new-public-id"), eq(true));
+                verify(fileRepository, times(1)).save(any(File.class));
+        }
+
+        @Test
+        void update_InvalidFolderPath_PathTraversal_ThrowsBadRequestException() {
+                // Given
+                String invalidPath = "/../etc"; // Path traversal attempt
+                FileUpdateRequest request = createTestFileUpdateRequest(null, invalidPath);
+
+                when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.of(testFile));
+
+                // When/Then
+                assertThatThrownBy(() -> fileService.update(fileId, request, userId))
+                                .isInstanceOf(BadRequestException.class)
+                                .hasMessageContaining("path traversal");
+
+                verify(fileRepository, times(1)).findByIdAndUserId(fileId, userId);
+                verify(storageService, never()).moveFile(any(), any(), any());
+                verify(fileRepository, never()).save(any());
+        }
+
+        @Test
+        void update_InvalidFolderPath_Backslash_ThrowsBadRequestException() {
+                // Given
+                String invalidPath = "\\windows\\path"; // Windows-style path
+                FileUpdateRequest request = createTestFileUpdateRequest(null, invalidPath);
+
+                when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.of(testFile));
+
+                // When/Then
+                assertThatThrownBy(() -> fileService.update(fileId, request, userId))
+                                .isInstanceOf(BadRequestException.class)
+                                .hasMessageContaining("Unix-style");
+
+                verify(fileRepository, times(1)).findByIdAndUserId(fileId, userId);
+                verify(storageService, never()).moveFile(any(), any(), any());
+                verify(fileRepository, never()).save(any());
+        }
+
+        @Test
+        void update_InvalidFolderPath_NoLeadingSlash_ThrowsBadRequestException() {
+                // Given
+                String invalidPath = "documents"; // Missing leading slash
+                FileUpdateRequest request = createTestFileUpdateRequest(null, invalidPath);
+
+                when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.of(testFile));
+
+                // When/Then
+                assertThatThrownBy(() -> fileService.update(fileId, request, userId))
+                                .isInstanceOf(BadRequestException.class)
+                                .hasMessageContaining("start with '/'");
+
+                verify(fileRepository, times(1)).findByIdAndUserId(fileId, userId);
+                verify(storageService, never()).moveFile(any(), any(), any());
+                verify(fileRepository, never()).save(any());
         }
 
         @Test
@@ -1053,6 +1244,60 @@ class FileServiceImplTest {
                 verify(fileRepository, times(1)).findByUserIdAndDeletedFalseAndFilenameContainingIgnoreCase(userId,
                                 query,
                                 pageable);
+        }
+
+        @Test
+        void search_InvalidFolderPath_PathTraversal_ThrowsBadRequestException() {
+                // Given
+                String query = "test";
+                Pageable pageable = PageRequest.of(0, 20);
+                String invalidPath = "/../etc"; // Path traversal attempt
+
+                // When/Then
+                assertThatThrownBy(
+                                () -> fileService.search(query, Optional.empty(), Optional.of(invalidPath), pageable,
+                                                userId))
+                                .isInstanceOf(BadRequestException.class)
+                                .hasMessageContaining("path traversal");
+
+                verify(fileRepository, never()).findByUserIdAndDeletedFalseAndFilenameContainingIgnoreCase(any(),
+                                anyString(), any());
+        }
+
+        @Test
+        void search_InvalidFolderPath_Backslash_ThrowsBadRequestException() {
+                // Given
+                String query = "test";
+                Pageable pageable = PageRequest.of(0, 20);
+                String invalidPath = "\\windows\\path"; // Windows-style path
+
+                // When/Then
+                assertThatThrownBy(
+                                () -> fileService.search(query, Optional.empty(), Optional.of(invalidPath), pageable,
+                                                userId))
+                                .isInstanceOf(BadRequestException.class)
+                                .hasMessageContaining("Unix-style");
+
+                verify(fileRepository, never()).findByUserIdAndDeletedFalseAndFilenameContainingIgnoreCase(any(),
+                                anyString(), any());
+        }
+
+        @Test
+        void search_InvalidFolderPath_NoLeadingSlash_ThrowsBadRequestException() {
+                // Given
+                String query = "test";
+                Pageable pageable = PageRequest.of(0, 20);
+                String invalidPath = "documents"; // Missing leading slash
+
+                // When/Then
+                assertThatThrownBy(
+                                () -> fileService.search(query, Optional.empty(), Optional.of(invalidPath), pageable,
+                                                userId))
+                                .isInstanceOf(BadRequestException.class)
+                                .hasMessageContaining("start with '/'");
+
+                verify(fileRepository, never()).findByUserIdAndDeletedFalseAndFilenameContainingIgnoreCase(any(),
+                                anyString(), any());
         }
 
         @Test

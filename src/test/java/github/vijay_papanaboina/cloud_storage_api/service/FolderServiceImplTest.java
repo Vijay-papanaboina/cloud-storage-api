@@ -6,7 +6,6 @@ import github.vijay_papanaboina.cloud_storage_api.dto.FolderResponse;
 import github.vijay_papanaboina.cloud_storage_api.dto.FolderStatisticsResponse;
 import github.vijay_papanaboina.cloud_storage_api.exception.BadRequestException;
 import github.vijay_papanaboina.cloud_storage_api.exception.NotFoundException;
-import github.vijay_papanaboina.cloud_storage_api.exception.ResourceNotFoundException;
 import github.vijay_papanaboina.cloud_storage_api.model.File;
 import github.vijay_papanaboina.cloud_storage_api.model.User;
 import github.vijay_papanaboina.cloud_storage_api.repository.FileRepository;
@@ -288,18 +287,21 @@ class FolderServiceImplTest {
     }
 
     @Test
-    void deleteFolder_FolderNotFound_ThrowsResourceNotFoundException() {
-        // Given
+    void deleteFolder_FolderNotFound_Succeeds() {
+        // Given - Non-existent folder (fileCount == 0)
+        // Implementation now treats fileCount == 0 as success (folder already
+        // deleted/doesn't exist)
         when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
         when(fileRepository.countByUserIdAndFolderPathAndDeletedFalse(userId, folderPath)).thenReturn(0L);
 
-        // When/Then
-        assertThatThrownBy(() -> folderService.deleteFolder(folderPath, userId))
-                .isInstanceOf(ResourceNotFoundException.class)
-                .hasMessageContaining("Folder not found");
+        // When - Should complete successfully without exception
+        folderService.deleteFolder(folderPath, userId);
 
+        // Then - Verify repository methods were called
         verify(userRepository, times(1)).findById(userId);
         verify(fileRepository, times(1)).countByUserIdAndFolderPathAndDeletedFalse(userId, folderPath);
+        // No exception thrown - implementation logs success and returns normally for
+        // empty/non-existent folders
     }
 
     @Test
@@ -345,7 +347,8 @@ class FolderServiceImplTest {
         List<String> allFolders = Arrays.asList(folderPath, folderPath + "/subfolder");
 
         when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
-        when(fileRepository.countByUserIdAndFolderPathAndDeletedFalse(userId, folderPath)).thenReturn(fileCount);
+        // Implementation uses getFolderStatisticsByUserIdAndFolderPath, not
+        // countByUserIdAndFolderPathAndDeletedFalse for main folder
         when(fileRepository.getFolderStatisticsByUserIdAndFolderPath(userId, folderPath)).thenReturn(stats);
         when(fileRepository.getFolderContentTypeCountsByUserIdAndFolderPath(userId, folderPath))
                 .thenReturn(contentTypeCounts);
@@ -366,26 +369,49 @@ class FolderServiceImplTest {
         assertThat(result.getByContentType().get("text/plain")).isEqualTo(5L);
 
         verify(userRepository, times(1)).findById(userId);
-        verify(fileRepository, times(1)).countByUserIdAndFolderPathAndDeletedFalse(userId, folderPath);
+        // Implementation uses getFolderStatisticsByUserIdAndFolderPath instead of
+        // countByUserIdAndFolderPathAndDeletedFalse for main folder
         verify(fileRepository, times(1)).getFolderStatisticsByUserIdAndFolderPath(userId, folderPath);
+        verify(fileRepository, times(1)).getFolderContentTypeCountsByUserIdAndFolderPath(userId, folderPath);
+        verify(fileRepository, times(1)).findDistinctFolderPathsByUserIdAndDeletedFalse(userId);
+        // countByUserIdAndFolderPathAndDeletedFalse is only called for subfolders, not
+        // the main folder
+        verify(fileRepository, times(1)).countByUserIdAndFolderPathAndDeletedFalse(userId, folderPath + "/subfolder");
     }
 
     @Test
-    void getFolderStatistics_EmptyFolder_ThrowsResourceNotFoundException() {
-        // Given - Empty folder (fileCount == 0)
-        long fileCount = 0L;
+    void getFolderStatistics_EmptyFolder_ReturnsStatisticsWithZeroFiles() {
+        // Given - Empty folder (fileCount == 0) - implementation now allows empty
+        // folders
+        Map<String, Object> emptyStats = new HashMap<>();
+        emptyStats.put("file_count", 0L);
+        emptyStats.put("total_size", 0L);
+        List<Object[]> emptyContentTypeCounts = new ArrayList<>();
+        List<String> emptyFolders = Arrays.asList(folderPath);
 
         when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
-        when(fileRepository.countByUserIdAndFolderPathAndDeletedFalse(userId, folderPath)).thenReturn(fileCount);
+        when(fileRepository.getFolderStatisticsByUserIdAndFolderPath(userId, folderPath)).thenReturn(emptyStats);
+        when(fileRepository.getFolderContentTypeCountsByUserIdAndFolderPath(userId, folderPath))
+                .thenReturn(emptyContentTypeCounts);
+        when(fileRepository.findDistinctFolderPathsByUserIdAndDeletedFalse(userId)).thenReturn(emptyFolders);
 
-        // When/Then - Empty folder throws ResourceNotFoundException
-        assertThatThrownBy(() -> folderService.getFolderStatistics(folderPath, userId))
-                .isInstanceOf(ResourceNotFoundException.class)
-                .hasMessageContaining("Folder not found");
+        // When - Empty folder now returns statistics with 0 files instead of throwing
+        // exception
+        FolderStatisticsResponse result = folderService.getFolderStatistics(folderPath, userId);
+
+        // Then
+        assertThat(result).isNotNull();
+        assertThat(result.getPath()).isEqualTo(folderPath);
+        assertThat(result.getTotalFiles()).isEqualTo(0L);
+        assertThat(result.getTotalSize()).isEqualTo(0L);
+        assertThat(result.getAverageFileSize()).isEqualTo(0L);
+        assertThat(result.getByContentType()).isEmpty();
+        assertThat(result.getByFolder()).isEmpty();
 
         verify(userRepository, times(1)).findById(userId);
-        verify(fileRepository, times(1)).countByUserIdAndFolderPathAndDeletedFalse(userId, folderPath);
-        // These stubbings are not reached because exception is thrown first
+        verify(fileRepository, times(1)).getFolderStatisticsByUserIdAndFolderPath(userId, folderPath);
+        verify(fileRepository, times(1)).getFolderContentTypeCountsByUserIdAndFolderPath(userId, folderPath);
+        verify(fileRepository, times(1)).findDistinctFolderPathsByUserIdAndDeletedFalse(userId);
     }
 
     @Test

@@ -1,6 +1,7 @@
 package github.vijay_papanaboina.cloud_storage_api.dto;
 
 import github.vijay_papanaboina.cloud_storage_api.model.ApiKey;
+import github.vijay_papanaboina.cloud_storage_api.model.ApiKeyPermission;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -18,13 +19,14 @@ public class ApiKeyResponse {
     private Instant createdAt;
     private Instant expiresAt;
     private Instant lastUsedAt;
+    private ApiKeyPermission permissions;
 
     // Constructors
     public ApiKeyResponse() {
     }
 
     public ApiKeyResponse(UUID id, String key, String name, Boolean active, Instant createdAt,
-            Instant expiresAt, Instant lastUsedAt) {
+            Instant expiresAt, Instant lastUsedAt, ApiKeyPermission permissions) {
         this.id = id;
         this.key = key;
         this.name = name;
@@ -32,6 +34,7 @@ public class ApiKeyResponse {
         this.createdAt = createdAt;
         this.expiresAt = expiresAt;
         this.lastUsedAt = lastUsedAt;
+        this.permissions = permissions;
     }
 
     /**
@@ -53,6 +56,7 @@ public class ApiKeyResponse {
         response.setCreatedAt(apiKey.getCreatedAt());
         response.setExpiresAt(apiKey.getExpiresAt());
         response.setLastUsedAt(apiKey.getLastUsedAt());
+        response.setPermissions(apiKey.getPermissions());
         return response;
     }
 
@@ -113,6 +117,14 @@ public class ApiKeyResponse {
         this.lastUsedAt = lastUsedAt;
     }
 
+    public ApiKeyPermission getPermissions() {
+        return permissions;
+    }
+
+    public void setPermissions(ApiKeyPermission permissions) {
+        this.permissions = permissions;
+    }
+
     @Override
     public String toString() {
         return "ApiKeyResponse{" +
@@ -123,6 +135,7 @@ public class ApiKeyResponse {
                 ", createdAt=" + createdAt +
                 ", expiresAt=" + expiresAt +
                 ", lastUsedAt=" + lastUsedAt +
+                ", permissions=" + permissions +
                 '}';
     }
 }

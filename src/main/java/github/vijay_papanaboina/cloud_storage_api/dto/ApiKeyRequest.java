@@ -1,5 +1,6 @@
 package github.vijay_papanaboina.cloud_storage_api.dto;
 
+import github.vijay_papanaboina.cloud_storage_api.model.ApiKeyPermission;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
@@ -15,6 +16,8 @@ public class ApiKeyRequest {
 
     private Instant expiresAt;
 
+    private ApiKeyPermission permissions = ApiKeyPermission.READ_ONLY;
+
     // Constructors
     public ApiKeyRequest() {
     }
@@ -22,6 +25,13 @@ public class ApiKeyRequest {
     public ApiKeyRequest(String name, Instant expiresAt) {
         this.name = name;
         this.expiresAt = expiresAt;
+        this.permissions = ApiKeyPermission.READ_ONLY;
+    }
+
+    public ApiKeyRequest(String name, Instant expiresAt, ApiKeyPermission permissions) {
+        this.name = name;
+        this.expiresAt = expiresAt;
+        this.permissions = permissions != null ? permissions : ApiKeyPermission.READ_ONLY;
     }
 
     // Getters and Setters
@@ -41,11 +51,20 @@ public class ApiKeyRequest {
         this.expiresAt = expiresAt;
     }
 
+    public ApiKeyPermission getPermissions() {
+        return permissions;
+    }
+
+    public void setPermissions(ApiKeyPermission permissions) {
+        this.permissions = permissions != null ? permissions : ApiKeyPermission.READ_ONLY;
+    }
+
     @Override
     public String toString() {
         return "ApiKeyRequest{" +
                 "name='" + name + '\'' +
                 ", expiresAt=" + expiresAt +
+                ", permissions=" + permissions +
                 '}';
     }
 }

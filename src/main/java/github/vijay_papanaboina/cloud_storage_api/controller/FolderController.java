@@ -48,6 +48,7 @@ public class FolderController {
      */
     @PostMapping
     public ResponseEntity<FolderResponse> createFolder(@Valid @RequestBody FolderCreateRequest request) {
+        SecurityUtils.requirePermission("ROLE_WRITE");
         UUID userId = SecurityUtils.getAuthenticatedUserId();
 
         // Validate the folder path
@@ -87,6 +88,7 @@ public class FolderController {
     @GetMapping
     public ResponseEntity<List<FolderResponse>> listFolders(
             @RequestParam(required = false) String parentPath) {
+        SecurityUtils.requirePermission("ROLE_READ");
         UUID userId = SecurityUtils.getAuthenticatedUserId();
         Optional<String> parentPathOpt = Optional.ofNullable(parentPath);
         List<FolderResponse> response = folderService.listFolders(parentPathOpt, userId);
@@ -104,6 +106,7 @@ public class FolderController {
     @GetMapping("/statistics")
     public ResponseEntity<FolderStatisticsResponse> getFolderStatistics(
             @RequestParam(required = true) String path) {
+        SecurityUtils.requirePermission("ROLE_READ");
         UUID userId = SecurityUtils.getAuthenticatedUserId();
 
         // Validate path parameter
@@ -130,6 +133,7 @@ public class FolderController {
      */
     @DeleteMapping
     public ResponseEntity<Void> deleteFolder(@RequestParam(required = true) String path) {
+        SecurityUtils.requirePermission("ROLE_DELETE");
         UUID userId = SecurityUtils.getAuthenticatedUserId();
 
         // Validate path parameter

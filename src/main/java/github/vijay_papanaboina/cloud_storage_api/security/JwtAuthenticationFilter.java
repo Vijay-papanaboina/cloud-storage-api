@@ -11,12 +11,16 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.lang.NonNull;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -55,8 +59,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             String authHeader = request.getHeader(AUTHORIZATION_HEADER);
 
             if (authHeader != null) {
-                log.info("Authorization header received: {}... (length: {})",
-                        authHeader.length() > 20 ? authHeader.substring(0, 20) : authHeader,
+                log.info("Authorization header present (type: {}, length: {})",
+                        authHeader.startsWith(BEARER_PREFIX) ? "Bearer" : "Unknown",
                         authHeader.length());
             } else {
                 log.info("No Authorization header found in request to: {}", request.getRequestURI());
@@ -70,16 +74,34 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                         // Extract user ID from token
                         UUID userId = jwtTokenProvider.getUserIdFromToken(token);
 
-                        // Create authentication object
-                        Authentication authentication = new UsernamePasswordAuthenticationToken(
-                                userId,
-                                null,
-                                null // No authorities for now
-                        );
+                        // Extract authorities from token
+                        List<String> authorityStrings = jwtTokenProvider.getAuthoritiesFromToken(token);
+                        if (authorityStrings == null) {
+                            log.warn("JWT token has null authorities - denying access for user: {}", userId);
+                            filterChain.doFilter(request, response);
+                            return;
+                        }
+                        List<GrantedAuthority> authorities = new ArrayList<>();
+                        for (String authority : authorityStrings) {
+                            authorities.add(new SimpleGrantedAuthority(authority));
+                        }
 
-                        // Set authentication in SecurityContext
-                        SecurityContextHolder.getContext().setAuthentication(authentication);
-                        log.info("JWT authentication successful for user: {}", userId);
+                        // If no authorities in token, deny access (fail-closed)
+                        if (authorities.isEmpty()) {
+                            log.warn("JWT token has no authorities - denying access for user: {}", userId);
+                            // Continue without authentication - Spring Security will handle 401
+                        } else {
+                            // Create authentication object with explicit authorities
+                            Authentication authentication = new UsernamePasswordAuthenticationToken(
+                                    userId,
+                                    null,
+                                    authorities);
+
+                            // Set authentication in SecurityContext
+                            SecurityContextHolder.getContext().setAuthentication(authentication);
+                            log.info("JWT authentication successful for user: {} with authorities: {}",
+                                    userId, authorityStrings);
+                        }
                     } catch (InvalidTokenException e) {
                         log.warn("Invalid JWT token: {}", e.getMessage());
                         // Continue without authentication - Spring Security will handle 401

@@ -42,7 +42,7 @@ class AuthIntegrationTest extends BaseIntegrationTest {
     void loginWithValidCredentials_ShouldReturnValidJWT() throws Exception {
         // Given
         User user = createTestUser("testuser", "test@example.com");
-        LoginRequest request = new LoginRequest("testuser", "password123", "WEB");
+        LoginRequest request = new LoginRequest("testuser", "password123");
 
         // When & Then
         String response = mockMvc.perform(post("/api/auth/login")
@@ -50,7 +50,9 @@ class AuthIntegrationTest extends BaseIntegrationTest {
                 .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accessToken").exists())
-                .andExpect(jsonPath("$.refreshToken").exists())
+                .andExpect(jsonPath("$.refreshToken").doesNotExist())
+                .andExpect(cookie().exists("refreshToken"))
+                .andExpect(cookie().httpOnly("refreshToken", true))
                 .andExpect(jsonPath("$.tokenType").value("Bearer"))
                 .andReturn()
                 .getResponse()
@@ -72,7 +74,7 @@ class AuthIntegrationTest extends BaseIntegrationTest {
     void loginWithInvalidCredentials_ShouldReturn401() throws Exception {
         // Given
         createTestUser("testuser", "test@example.com");
-        LoginRequest request = new LoginRequest("testuser", "wrongpassword", "WEB");
+        LoginRequest request = new LoginRequest("testuser", "wrongpassword");
 
         // When & Then
         mockMvc.perform(post("/api/auth/login")
@@ -85,8 +87,7 @@ class AuthIntegrationTest extends BaseIntegrationTest {
     void refreshToken_ShouldGenerateNewAccessToken() throws Exception {
         // Given
         User user = createTestUser("testuser", "test@example.com");
-        String refreshToken = jwtTokenProvider.generateRefreshToken(user.getId(), user.getUsername(),
-                github.vijay_papanaboina.cloud_storage_api.model.ClientType.WEB);
+        String refreshToken = jwtTokenProvider.generateRefreshToken(user.getId(), user.getUsername());
         RefreshTokenRequest request = new RefreshTokenRequest(refreshToken);
 
         // When & Then
@@ -115,8 +116,7 @@ class AuthIntegrationTest extends BaseIntegrationTest {
         // Given
         User user = createTestUser("testuser", "test@example.com");
         String accessToken = generateAccessToken(user);
-        String refreshToken = jwtTokenProvider.generateRefreshToken(user.getId(), user.getUsername(),
-                github.vijay_papanaboina.cloud_storage_api.model.ClientType.WEB);
+        String refreshToken = jwtTokenProvider.generateRefreshToken(user.getId(), user.getUsername());
         RefreshTokenRequest request = new RefreshTokenRequest(refreshToken);
 
         // When & Then - logout requires authentication (access token in header)

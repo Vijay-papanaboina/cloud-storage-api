@@ -68,6 +68,7 @@ public class FileController {
             @Parameter(description = "File to upload", required = true, content = @Content(mediaType = MediaType.APPLICATION_OCTET_STREAM_VALUE)) @RequestParam("file") MultipartFile file,
             @Parameter(description = "Optional folder path (Unix-style, e.g., /photos/2024). Must start with '/' if provided.", required = false) @RequestParam(value = "folderPath", required = false) String folderPath,
             @Parameter(description = "Optional custom filename (defaults to original filename if not provided).", required = false) @RequestParam(value = "filename", required = false) String filename) {
+        SecurityUtils.requirePermission("ROLE_WRITE");
         UUID userId = SecurityUtils.getAuthenticatedUserId();
         Optional<String> folderPathOpt = Optional.ofNullable(folderPath);
         Optional<String> filenameOpt = Optional.ofNullable(filename);
@@ -93,6 +94,7 @@ public class FileController {
             @RequestParam(required = false) String sort,
             @RequestParam(required = false) String contentType,
             @RequestParam(required = false) String folderPath) {
+        SecurityUtils.requirePermission("ROLE_READ");
         UUID userId = SecurityUtils.getAuthenticatedUserId();
 
         // Validate pagination parameters
@@ -133,6 +135,7 @@ public class FileController {
      */
     @GetMapping("/{id}")
     public ResponseEntity<FileResponse> getFile(@PathVariable UUID id) {
+        SecurityUtils.requirePermission("ROLE_READ");
         UUID userId = SecurityUtils.getAuthenticatedUserId();
         FileResponse response = fileService.getById(id, userId);
         return ResponseEntity.ok(response);
@@ -150,6 +153,7 @@ public class FileController {
     public ResponseEntity<FileUrlResponse> getFileUrl(
             @PathVariable UUID id,
             @RequestParam(defaultValue = "60") int expirationMinutes) {
+        SecurityUtils.requirePermission("ROLE_READ");
         UUID userId = SecurityUtils.getAuthenticatedUserId();
 
         // Validate expirationMinutes: must be positive and non-zero
@@ -181,6 +185,7 @@ public class FileController {
      */
     @GetMapping("/{id}/download")
     public ResponseEntity<Resource> downloadFile(@PathVariable UUID id) {
+        SecurityUtils.requirePermission("ROLE_READ");
         UUID userId = SecurityUtils.getAuthenticatedUserId();
         // Get file metadata first
         FileResponse fileMetadata = fileService.getById(id, userId);
@@ -212,6 +217,7 @@ public class FileController {
     public ResponseEntity<FileResponse> updateFile(
             @PathVariable UUID id,
             @Valid @RequestBody FileUpdateRequest request) {
+        SecurityUtils.requirePermission("ROLE_WRITE");
         UUID userId = SecurityUtils.getAuthenticatedUserId();
         FileResponse response = fileService.update(id, request, userId);
         return ResponseEntity.ok(response);
@@ -226,6 +232,7 @@ public class FileController {
      */
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteFile(@PathVariable UUID id) {
+        SecurityUtils.requirePermission("ROLE_DELETE");
         UUID userId = SecurityUtils.getAuthenticatedUserId();
         fileService.delete(id, userId);
         return ResponseEntity.noContent().build();
@@ -243,6 +250,7 @@ public class FileController {
     public ResponseEntity<TransformResponse> transformFile(
             @PathVariable UUID id,
             @Valid @RequestBody TransformRequest request) {
+        SecurityUtils.requirePermission("ROLE_READ");
         UUID userId = SecurityUtils.getAuthenticatedUserId();
         TransformResponse response = fileService.transform(id, request, userId);
         return ResponseEntity.ok(response);
@@ -268,6 +276,7 @@ public class FileController {
             @RequestParam(required = false) String crop,
             @RequestParam(required = false) String quality,
             @RequestParam(required = false) String format) {
+        SecurityUtils.requirePermission("ROLE_READ");
         UUID userId = SecurityUtils.getAuthenticatedUserId();
 
         Optional<String> cropOpt = Optional.ofNullable(crop);
@@ -297,6 +306,7 @@ public class FileController {
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(required = false) String contentType,
             @RequestParam(required = false) String folderPath) {
+        SecurityUtils.requirePermission("ROLE_READ");
         UUID userId = SecurityUtils.getAuthenticatedUserId();
 
         // Validate query parameter
@@ -340,6 +350,7 @@ public class FileController {
      */
     @GetMapping("/statistics")
     public ResponseEntity<FileStatisticsResponse> getFileStatistics() {
+        SecurityUtils.requirePermission("ROLE_READ");
         UUID userId = SecurityUtils.getAuthenticatedUserId();
         FileStatisticsResponse response = fileService.getStatistics(userId);
         return ResponseEntity.ok(response);

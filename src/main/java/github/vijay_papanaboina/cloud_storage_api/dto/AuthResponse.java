@@ -8,7 +8,6 @@ public class AuthResponse {
     private String tokenType = DEFAULT_TOKEN_TYPE;
     private Long expiresIn;
     private Long refreshExpiresIn;
-    private String clientType;
     private UserResponse user;
 
     // Constructors
@@ -16,13 +15,12 @@ public class AuthResponse {
     }
 
     public AuthResponse(String accessToken, String refreshToken, String tokenType, Long expiresIn,
-            Long refreshExpiresIn, String clientType, UserResponse user) {
+            Long refreshExpiresIn, UserResponse user) {
         this.accessToken = accessToken;
         this.refreshToken = refreshToken;
         this.tokenType = tokenType != null ? tokenType : DEFAULT_TOKEN_TYPE;
         this.expiresIn = expiresIn;
         this.refreshExpiresIn = refreshExpiresIn;
-        this.clientType = clientType;
         this.user = user;
     }
 
@@ -67,14 +65,6 @@ public class AuthResponse {
         this.refreshExpiresIn = refreshExpiresIn;
     }
 
-    public String getClientType() {
-        return clientType;
-    }
-
-    public void setClientType(String clientType) {
-        this.clientType = clientType;
-    }
-
     public UserResponse getUser() {
         return user;
     }
@@ -97,7 +87,6 @@ public class AuthResponse {
                 "tokenType='" + tokenType + '\'' +
                 ", expiresIn=" + expiresIn +
                 ", refreshExpiresIn=" + refreshExpiresIn +
-                ", clientType='" + clientType + '\'' +
                 ", user=" + userInfo +
                 '}';
     }

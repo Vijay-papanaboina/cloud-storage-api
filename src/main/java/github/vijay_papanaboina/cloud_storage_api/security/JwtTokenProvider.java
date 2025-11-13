@@ -1,7 +1,6 @@
 package github.vijay_papanaboina.cloud_storage_api.security;
 
 import github.vijay_papanaboina.cloud_storage_api.exception.InvalidTokenException;
-import github.vijay_papanaboina.cloud_storage_api.model.ClientType;
 import github.vijay_papanaboina.cloud_storage_api.model.TokenType;
 
 import java.util.UUID;
@@ -10,22 +9,31 @@ public interface JwtTokenProvider {
     /**
      * Generate access token for a user
      *
-     * @param userId     User ID
-     * @param username   Username
-     * @param clientType Client type (CLI or WEB)
+     * @param userId   User ID
+     * @param username Username
      * @return JWT access token
      */
-    String generateAccessToken(UUID userId, String username, ClientType clientType);
+    String generateAccessToken(UUID userId, String username);
+
+    /**
+     * Generate access token for a user with authorities
+     *
+     * @param userId      User ID
+     * @param username    Username
+     * @param authorities List of authority strings (e.g., "ROLE_READ",
+     *                    "ROLE_WRITE")
+     * @return JWT access token
+     */
+    String generateAccessToken(UUID userId, String username, java.util.List<String> authorities);
 
     /**
      * Generate refresh token for a user
      *
-     * @param userId     User ID
-     * @param username   Username
-     * @param clientType Client type (CLI or WEB)
+     * @param userId   User ID
+     * @param username Username
      * @return JWT refresh token
      */
-    String generateRefreshToken(UUID userId, String username, ClientType clientType);
+    String generateRefreshToken(UUID userId, String username);
 
     /**
      * Validate a JWT token
@@ -54,28 +62,20 @@ public interface JwtTokenProvider {
     String getUsernameFromToken(String token) throws InvalidTokenException;
 
     /**
-     * Extract client type from JWT token
+     * Extract authorities from JWT token
      *
      * @param token JWT token
-     * @return Client type (CLI or WEB), defaults to WEB if not present
+     * @return List of authority strings
      * @throws InvalidTokenException if the token is invalid, expired, or malformed
      */
-    ClientType getClientTypeFromToken(String token) throws InvalidTokenException;
+    java.util.List<String> getAuthoritiesFromToken(String token) throws InvalidTokenException;
 
     /**
-     * Get token expiration time in milliseconds based on client type and token type
-     * <p>
-     * Implementations must support all enum values for both {@code clientType} and
-     * {@code tokenType}. Implementations must throw
-     * {@link IllegalArgumentException}
-     * for null parameters or unsupported combinations.
+     * Get token expiration time in milliseconds based on token type
      *
-     * @param clientType Client type (CLI or WEB), must not be null
-     * @param tokenType  Token type (ACCESS or REFRESH), must not be null
+     * @param tokenType Token type (ACCESS or REFRESH), must not be null
      * @return Expiration time in milliseconds
-     * @throws IllegalArgumentException if {@code clientType} or {@code tokenType}
-     *                                  is null,
-     *                                  or if the combination is not supported
+     * @throws IllegalArgumentException if {@code tokenType} is null
      */
-    long getTokenExpiration(ClientType clientType, TokenType tokenType);
+    long getTokenExpiration(TokenType tokenType);
 }

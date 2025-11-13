@@ -169,7 +169,7 @@ class FolderControllerTest {
     }
 
     @Test
-    void createFolder_Unauthenticated_Returns401() throws Exception {
+    void createFolder_Unauthenticated_Returns403() throws Exception {
         // Given
         FolderCreateRequest request = new FolderCreateRequest(folderPath, "Test description");
 
@@ -177,11 +177,10 @@ class FolderControllerTest {
         mockMvc.perform(post("/api/folders")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isForbidden());
 
         verify(folderService, never()).validateFolderPath(any(), any());
     }
-
     // GET /api/folders tests
 
     @Test
@@ -255,14 +254,13 @@ class FolderControllerTest {
     }
 
     @Test
-    void listFolders_Unauthenticated_Returns401() throws Exception {
+    void listFolders_Unauthenticated_Returns403() throws Exception {
         // When/Then
         mockMvc.perform(get("/api/folders"))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isForbidden());
 
         verify(folderService, never()).listFolders(any(), any());
     }
-
     // GET /api/folders/statistics tests
 
     @Test
@@ -339,15 +337,14 @@ class FolderControllerTest {
     }
 
     @Test
-    void getFolderStatistics_Unauthenticated_Returns401() throws Exception {
+    void getFolderStatistics_Unauthenticated_Returns403() throws Exception {
         // When/Then
         mockMvc.perform(get("/api/folders/statistics")
                 .param("path", folderPath))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isForbidden());
 
         verify(folderService, never()).getFolderStatistics(any(), any());
     }
-
     // DELETE /api/folders tests
 
     @Test
@@ -433,16 +430,15 @@ class FolderControllerTest {
     }
 
     @Test
-    void deleteFolder_Unauthenticated_Returns401() throws Exception {
+    void deleteFolder_Unauthenticated_Returns403() throws Exception {
         // When/Then
         mockMvc.perform(delete("/api/folders")
                 .param("path", folderPath))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isForbidden());
 
         verify(folderService, never()).deleteFolder(any(), any());
     }
 
-    // Helper methods
     private FolderResponse createTestFolderResponse(String path, Integer fileCount) {
         FolderResponse response = new FolderResponse();
         response.setPath(path);

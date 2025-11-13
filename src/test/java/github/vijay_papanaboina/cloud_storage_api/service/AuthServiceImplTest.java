@@ -11,7 +11,6 @@ import github.vijay_papanaboina.cloud_storage_api.exception.ConflictException;
 import github.vijay_papanaboina.cloud_storage_api.exception.InvalidTokenException;
 import github.vijay_papanaboina.cloud_storage_api.exception.ResourceNotFoundException;
 import github.vijay_papanaboina.cloud_storage_api.exception.UnauthorizedException;
-import github.vijay_papanaboina.cloud_storage_api.model.ClientType;
 import github.vijay_papanaboina.cloud_storage_api.model.TokenType;
 import github.vijay_papanaboina.cloud_storage_api.model.User;
 import github.vijay_papanaboina.cloud_storage_api.repository.UserRepository;
@@ -69,9 +68,9 @@ class AuthServiceImplTest {
 
     // login tests
     @Test
-    void login_Success_WebClient() throws InvalidTokenException {
+    void login_Success() throws InvalidTokenException {
         // Given
-        LoginRequest request = createTestLoginRequest(username, password, "WEB");
+        LoginRequest request = createTestLoginRequest(username, password);
         String accessToken = "access-token";
         String refreshToken = "refresh-token";
         long accessTokenExpiration = 900000L; // 15 minutes
@@ -79,10 +78,10 @@ class AuthServiceImplTest {
 
         when(userRepository.findByUsername(username)).thenReturn(Optional.of(testUser));
         when(passwordEncoder.matches(password, passwordHash)).thenReturn(true);
-        when(jwtTokenProvider.generateAccessToken(userId, username, ClientType.WEB)).thenReturn(accessToken);
-        when(jwtTokenProvider.generateRefreshToken(userId, username, ClientType.WEB)).thenReturn(refreshToken);
-        when(jwtTokenProvider.getTokenExpiration(ClientType.WEB, TokenType.ACCESS)).thenReturn(accessTokenExpiration);
-        when(jwtTokenProvider.getTokenExpiration(ClientType.WEB, TokenType.REFRESH)).thenReturn(refreshTokenExpiration);
+        when(jwtTokenProvider.generateAccessToken(userId, username)).thenReturn(accessToken);
+        when(jwtTokenProvider.generateRefreshToken(userId, username)).thenReturn(refreshToken);
+        when(jwtTokenProvider.getTokenExpiration(TokenType.ACCESS)).thenReturn(accessTokenExpiration);
+        when(jwtTokenProvider.getTokenExpiration(TokenType.REFRESH)).thenReturn(refreshTokenExpiration);
         when(userRepository.save(any(User.class))).thenReturn(testUser);
 
         // When
@@ -95,106 +94,21 @@ class AuthServiceImplTest {
         assertThat(response.getTokenType()).isEqualTo(AuthResponse.DEFAULT_TOKEN_TYPE);
         assertThat(response.getExpiresIn()).isEqualTo(accessTokenExpiration);
         assertThat(response.getRefreshExpiresIn()).isEqualTo(refreshTokenExpiration);
-        assertThat(response.getClientType()).isEqualTo("WEB");
         assertThat(response.getUser()).isNotNull();
         assertThat(response.getUser().getId()).isEqualTo(userId);
         assertThat(response.getUser().getUsername()).isEqualTo(username);
 
         verify(userRepository, times(1)).findByUsername(username);
         verify(passwordEncoder, times(1)).matches(password, passwordHash);
-        verify(jwtTokenProvider, times(1)).generateAccessToken(userId, username, ClientType.WEB);
-        verify(jwtTokenProvider, times(1)).generateRefreshToken(userId, username, ClientType.WEB);
+        verify(jwtTokenProvider, times(1)).generateAccessToken(userId, username);
+        verify(jwtTokenProvider, times(1)).generateRefreshToken(userId, username);
         verify(userRepository, times(1)).save(any(User.class));
-    }
-
-    @Test
-    void login_Success_CliClient() throws InvalidTokenException {
-        // Given
-        LoginRequest request = createTestLoginRequest(username, password, "CLI");
-        String accessToken = "access-token";
-        String refreshToken = "refresh-token";
-        long accessTokenExpiration = 86400000L; // 1 day
-        long refreshTokenExpiration = 7776000000L; // 90 days
-
-        when(userRepository.findByUsername(username)).thenReturn(Optional.of(testUser));
-        when(passwordEncoder.matches(password, passwordHash)).thenReturn(true);
-        when(jwtTokenProvider.generateAccessToken(userId, username, ClientType.CLI)).thenReturn(accessToken);
-        when(jwtTokenProvider.generateRefreshToken(userId, username, ClientType.CLI)).thenReturn(refreshToken);
-        when(jwtTokenProvider.getTokenExpiration(ClientType.CLI, TokenType.ACCESS)).thenReturn(accessTokenExpiration);
-        when(jwtTokenProvider.getTokenExpiration(ClientType.CLI, TokenType.REFRESH)).thenReturn(refreshTokenExpiration);
-        when(userRepository.save(any(User.class))).thenReturn(testUser);
-
-        // When
-        AuthResponse response = authService.login(request);
-
-        // Then
-        assertThat(response).isNotNull();
-        assertThat(response.getClientType()).isEqualTo("CLI");
-        assertThat(response.getExpiresIn()).isEqualTo(accessTokenExpiration);
-        assertThat(response.getRefreshExpiresIn()).isEqualTo(refreshTokenExpiration);
-
-        verify(jwtTokenProvider, times(1)).generateAccessToken(userId, username, ClientType.CLI);
-        verify(jwtTokenProvider, times(1)).generateRefreshToken(userId, username, ClientType.CLI);
-    }
-
-    @Test
-    void login_Success_NullClientType_DefaultsToWeb() throws InvalidTokenException {
-        // Given
-        LoginRequest request = createTestLoginRequest(username, password, null);
-        String accessToken = "access-token";
-        String refreshToken = "refresh-token";
-        long accessTokenExpiration = 900000L;
-        long refreshTokenExpiration = 604800000L;
-
-        when(userRepository.findByUsername(username)).thenReturn(Optional.of(testUser));
-        when(passwordEncoder.matches(password, passwordHash)).thenReturn(true);
-        when(jwtTokenProvider.generateAccessToken(userId, username, ClientType.WEB)).thenReturn(accessToken);
-        when(jwtTokenProvider.generateRefreshToken(userId, username, ClientType.WEB)).thenReturn(refreshToken);
-        when(jwtTokenProvider.getTokenExpiration(ClientType.WEB, TokenType.ACCESS)).thenReturn(accessTokenExpiration);
-        when(jwtTokenProvider.getTokenExpiration(ClientType.WEB, TokenType.REFRESH)).thenReturn(refreshTokenExpiration);
-        when(userRepository.save(any(User.class))).thenReturn(testUser);
-
-        // When
-        AuthResponse response = authService.login(request);
-
-        // Then
-        assertThat(response).isNotNull();
-        assertThat(response.getClientType()).isEqualTo("WEB");
-
-        verify(jwtTokenProvider, times(1)).generateAccessToken(userId, username, ClientType.WEB);
-    }
-
-    @Test
-    void login_Success_InvalidClientType_DefaultsToWeb() throws InvalidTokenException {
-        // Given
-        LoginRequest request = createTestLoginRequest(username, password, "INVALID");
-        String accessToken = "access-token";
-        String refreshToken = "refresh-token";
-        long accessTokenExpiration = 900000L;
-        long refreshTokenExpiration = 604800000L;
-
-        when(userRepository.findByUsername(username)).thenReturn(Optional.of(testUser));
-        when(passwordEncoder.matches(password, passwordHash)).thenReturn(true);
-        when(jwtTokenProvider.generateAccessToken(userId, username, ClientType.WEB)).thenReturn(accessToken);
-        when(jwtTokenProvider.generateRefreshToken(userId, username, ClientType.WEB)).thenReturn(refreshToken);
-        when(jwtTokenProvider.getTokenExpiration(ClientType.WEB, TokenType.ACCESS)).thenReturn(accessTokenExpiration);
-        when(jwtTokenProvider.getTokenExpiration(ClientType.WEB, TokenType.REFRESH)).thenReturn(refreshTokenExpiration);
-        when(userRepository.save(any(User.class))).thenReturn(testUser);
-
-        // When
-        AuthResponse response = authService.login(request);
-
-        // Then
-        assertThat(response).isNotNull();
-        assertThat(response.getClientType()).isEqualTo("WEB");
-
-        verify(jwtTokenProvider, times(1)).generateAccessToken(userId, username, ClientType.WEB);
     }
 
     @Test
     void login_UserNotFound_ThrowsUnauthorizedException() {
         // Given
-        LoginRequest request = createTestLoginRequest(username, password, "WEB");
+        LoginRequest request = createTestLoginRequest(username, password);
         when(userRepository.findByUsername(username)).thenReturn(Optional.empty());
 
         // When/Then
@@ -204,13 +118,13 @@ class AuthServiceImplTest {
 
         verify(userRepository, times(1)).findByUsername(username);
         verify(passwordEncoder, never()).matches(anyString(), anyString());
-        verify(jwtTokenProvider, never()).generateAccessToken(any(), any(), any());
+        verify(jwtTokenProvider, never()).generateAccessToken(any(), any());
     }
 
     @Test
     void login_InactiveUser_ThrowsUnauthorizedException() {
         // Given
-        LoginRequest request = createTestLoginRequest(username, password, "WEB");
+        LoginRequest request = createTestLoginRequest(username, password);
         testUser.setActive(false);
         when(userRepository.findByUsername(username)).thenReturn(Optional.of(testUser));
 
@@ -221,13 +135,13 @@ class AuthServiceImplTest {
 
         verify(userRepository, times(1)).findByUsername(username);
         verify(passwordEncoder, never()).matches(anyString(), anyString());
-        verify(jwtTokenProvider, never()).generateAccessToken(any(), any(), any());
+        verify(jwtTokenProvider, never()).generateAccessToken(any(), any());
     }
 
     @Test
     void login_InvalidPassword_ThrowsUnauthorizedException() {
         // Given
-        LoginRequest request = createTestLoginRequest(username, password, "WEB");
+        LoginRequest request = createTestLoginRequest(username, password);
         when(userRepository.findByUsername(username)).thenReturn(Optional.of(testUser));
         when(passwordEncoder.matches(password, passwordHash)).thenReturn(false);
 
@@ -238,13 +152,13 @@ class AuthServiceImplTest {
 
         verify(userRepository, times(1)).findByUsername(username);
         verify(passwordEncoder, times(1)).matches(password, passwordHash);
-        verify(jwtTokenProvider, never()).generateAccessToken(any(), any(), any());
+        verify(jwtTokenProvider, never()).generateAccessToken(any(), any());
     }
 
     @Test
     void login_UpdatesLastLoginAt() throws InvalidTokenException {
         // Given
-        LoginRequest request = createTestLoginRequest(username, password, "WEB");
+        LoginRequest request = createTestLoginRequest(username, password);
         String accessToken = "access-token";
         String refreshToken = "refresh-token";
         long accessTokenExpiration = 900000L;
@@ -252,10 +166,10 @@ class AuthServiceImplTest {
 
         when(userRepository.findByUsername(username)).thenReturn(Optional.of(testUser));
         when(passwordEncoder.matches(password, passwordHash)).thenReturn(true);
-        when(jwtTokenProvider.generateAccessToken(userId, username, ClientType.WEB)).thenReturn(accessToken);
-        when(jwtTokenProvider.generateRefreshToken(userId, username, ClientType.WEB)).thenReturn(refreshToken);
-        when(jwtTokenProvider.getTokenExpiration(ClientType.WEB, TokenType.ACCESS)).thenReturn(accessTokenExpiration);
-        when(jwtTokenProvider.getTokenExpiration(ClientType.WEB, TokenType.REFRESH)).thenReturn(refreshTokenExpiration);
+        when(jwtTokenProvider.generateAccessToken(userId, username)).thenReturn(accessToken);
+        when(jwtTokenProvider.generateRefreshToken(userId, username)).thenReturn(refreshToken);
+        when(jwtTokenProvider.getTokenExpiration(TokenType.ACCESS)).thenReturn(accessTokenExpiration);
+        when(jwtTokenProvider.getTokenExpiration(TokenType.REFRESH)).thenReturn(refreshTokenExpiration);
         when(userRepository.save(any(User.class))).thenReturn(testUser);
 
         // When
@@ -418,10 +332,9 @@ class AuthServiceImplTest {
         when(jwtTokenProvider.validateToken(refreshToken)).thenReturn(true);
         when(jwtTokenProvider.getUserIdFromToken(refreshToken)).thenReturn(userId);
         when(jwtTokenProvider.getUsernameFromToken(refreshToken)).thenReturn(username);
-        when(jwtTokenProvider.getClientTypeFromToken(refreshToken)).thenReturn(ClientType.WEB);
         when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
-        when(jwtTokenProvider.generateAccessToken(userId, username, ClientType.WEB)).thenReturn(newAccessToken);
-        when(jwtTokenProvider.getTokenExpiration(ClientType.WEB, TokenType.ACCESS)).thenReturn(accessTokenExpiration);
+        when(jwtTokenProvider.generateAccessToken(userId, username)).thenReturn(newAccessToken);
+        when(jwtTokenProvider.getTokenExpiration(TokenType.ACCESS)).thenReturn(accessTokenExpiration);
 
         // When
         RefreshTokenResponse response = authService.refreshToken(request);
@@ -434,7 +347,7 @@ class AuthServiceImplTest {
 
         verify(jwtTokenProvider, times(1)).validateToken(refreshToken);
         verify(jwtTokenProvider, times(1)).getUserIdFromToken(refreshToken);
-        verify(jwtTokenProvider, times(1)).generateAccessToken(userId, username, ClientType.WEB);
+        verify(jwtTokenProvider, times(1)).generateAccessToken(userId, username);
     }
 
     @Test
@@ -463,7 +376,6 @@ class AuthServiceImplTest {
         when(jwtTokenProvider.validateToken(refreshToken)).thenReturn(true);
         when(jwtTokenProvider.getUserIdFromToken(refreshToken)).thenReturn(userId);
         when(jwtTokenProvider.getUsernameFromToken(refreshToken)).thenReturn(username);
-        when(jwtTokenProvider.getClientTypeFromToken(refreshToken)).thenReturn(ClientType.WEB);
         when(userRepository.findById(userId)).thenReturn(Optional.empty());
 
         // When/Then
@@ -472,7 +384,7 @@ class AuthServiceImplTest {
                 .hasMessageContaining("User not found");
 
         verify(userRepository, times(1)).findById(userId);
-        verify(jwtTokenProvider, never()).generateAccessToken(any(), any(), any());
+        verify(jwtTokenProvider, never()).generateAccessToken(any(), any());
     }
 
     @Test
@@ -485,7 +397,6 @@ class AuthServiceImplTest {
         when(jwtTokenProvider.validateToken(refreshToken)).thenReturn(true);
         when(jwtTokenProvider.getUserIdFromToken(refreshToken)).thenReturn(userId);
         when(jwtTokenProvider.getUsernameFromToken(refreshToken)).thenReturn(username);
-        when(jwtTokenProvider.getClientTypeFromToken(refreshToken)).thenReturn(ClientType.WEB);
         when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
 
         // When/Then
@@ -494,7 +405,7 @@ class AuthServiceImplTest {
                 .hasMessageContaining("User account is inactive");
 
         verify(userRepository, times(1)).findById(userId);
-        verify(jwtTokenProvider, never()).generateAccessToken(any(), any(), any());
+        verify(jwtTokenProvider, never()).generateAccessToken(any(), any());
     }
 
     @Test
@@ -514,7 +425,7 @@ class AuthServiceImplTest {
 
         verify(jwtTokenProvider, times(1)).validateToken(refreshToken);
         verify(jwtTokenProvider, times(1)).getUserIdFromToken(refreshToken);
-        verify(jwtTokenProvider, never()).generateAccessToken(any(), any(), any());
+        verify(jwtTokenProvider, never()).generateAccessToken(any(), any());
     }
 
     @Test
@@ -698,11 +609,10 @@ class AuthServiceImplTest {
         return user;
     }
 
-    private LoginRequest createTestLoginRequest(String username, String password, String clientType) {
+    private LoginRequest createTestLoginRequest(String username, String password) {
         LoginRequest request = new LoginRequest();
         request.setUsername(username);
         request.setPassword(password);
-        request.setClientType(clientType);
         return request;
     }
 

@@ -2,6 +2,7 @@ package github.vijay_papanaboina.cloud_storage_api.controller;
 
 import github.vijay_papanaboina.cloud_storage_api.dto.BatchJobResponse;
 import github.vijay_papanaboina.cloud_storage_api.exception.ResourceNotFoundException;
+import github.vijay_papanaboina.cloud_storage_api.security.SecurityUtils;
 import github.vijay_papanaboina.cloud_storage_api.service.BatchJobService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -46,6 +47,7 @@ public class BatchController {
      */
     @GetMapping("/{id}/status")
     public ResponseEntity<BatchJobResponse> getBatchJobStatus(@PathVariable UUID id) {
+        SecurityUtils.requirePermission("ROLE_READ");
         BatchJobResponse response = batchJobService.getBatchJobStatus(id);
         return ResponseEntity.ok(response);
     }

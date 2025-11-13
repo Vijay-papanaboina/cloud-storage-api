@@ -3,8 +3,11 @@ package github.vijay_papanaboina.cloud_storage_api.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import github.vijay_papanaboina.cloud_storage_api.dto.*;
 import github.vijay_papanaboina.cloud_storage_api.exception.ConflictException;
+import github.vijay_papanaboina.cloud_storage_api.exception.InvalidTokenException;
 import github.vijay_papanaboina.cloud_storage_api.exception.ResourceNotFoundException;
 import github.vijay_papanaboina.cloud_storage_api.exception.UnauthorizedException;
+import github.vijay_papanaboina.cloud_storage_api.model.TokenType;
+import github.vijay_papanaboina.cloud_storage_api.security.CookieUtils;
 import github.vijay_papanaboina.cloud_storage_api.security.JwtTokenProvider;
 import github.vijay_papanaboina.cloud_storage_api.security.SecurityUtils;
 import github.vijay_papanaboina.cloud_storage_api.service.ApiKeyService;
@@ -52,6 +55,9 @@ class AuthControllerTest {
     @MockBean
     private JwtTokenProvider jwtTokenProvider;
 
+    @MockBean
+    private CookieUtils cookieUtils;
+
     private UUID userId;
     private String username;
     private String email;
@@ -67,10 +73,11 @@ class AuthControllerTest {
     @Test
     void login_Success_WebClient_Returns200() throws Exception {
         // Given
-        LoginRequest request = new LoginRequest(username, "password123", "WEB");
-        AuthResponse authResponse = createTestAuthResponse("access-token", "refresh-token", "WEB");
+        LoginRequest request = new LoginRequest(username, "password123");
+        AuthResponse authResponse = createTestAuthResponse("access-token", "refresh-token");
 
         when(authService.login(any(LoginRequest.class))).thenReturn(authResponse);
+        doNothing().when(cookieUtils).setRefreshTokenCookie(any(), anyString(), anyInt());
 
         // When/Then
         mockMvc.perform(post("/api/auth/login")
@@ -78,30 +85,12 @@ class AuthControllerTest {
                 .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accessToken").value("access-token"))
-                .andExpect(jsonPath("$.refreshToken").value("refresh-token"))
+                .andExpect(jsonPath("$.refreshToken").doesNotExist())
                 .andExpect(jsonPath("$.tokenType").value("Bearer"))
-                .andExpect(jsonPath("$.clientType").value("WEB"))
                 .andExpect(jsonPath("$.user.username").value(username));
 
         verify(authService, times(1)).login(any(LoginRequest.class));
-    }
-
-    @Test
-    void login_Success_CliClient_Returns200() throws Exception {
-        // Given
-        LoginRequest request = new LoginRequest(username, "password123", "CLI");
-        AuthResponse authResponse = createTestAuthResponse("access-token", "refresh-token", "CLI");
-
-        when(authService.login(any(LoginRequest.class))).thenReturn(authResponse);
-
-        // When/Then
-        mockMvc.perform(post("/api/auth/login")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.clientType").value("CLI"));
-
-        verify(authService, times(1)).login(any(LoginRequest.class));
+        verify(cookieUtils, times(1)).setRefreshTokenCookie(any(), eq("refresh-token"), anyInt());
     }
 
     @Test
@@ -137,7 +126,7 @@ class AuthControllerTest {
     @Test
     void login_InvalidCredentials_Returns401() throws Exception {
         // Given
-        LoginRequest request = new LoginRequest(username, "wrongpassword", "WEB");
+        LoginRequest request = new LoginRequest(username, "wrongpassword");
 
         when(authService.login(any(LoginRequest.class)))
                 .thenThrow(new UnauthorizedException("Invalid username or password"));
@@ -264,7 +253,16 @@ class AuthControllerTest {
         response.setTokenType("Bearer");
         response.setExpiresIn(900000L);
 
+        // Mock token extraction (happens before authService.refreshToken)
+        when(jwtTokenProvider.getUserIdFromToken("refresh-token")).thenReturn(userId);
+        when(jwtTokenProvider.getUsernameFromToken("refresh-token")).thenReturn(username);
+
+        // Mock token generation for rotation
+        when(jwtTokenProvider.generateRefreshToken(userId, username)).thenReturn("new-refresh-token");
+        when(jwtTokenProvider.getTokenExpiration(TokenType.REFRESH)).thenReturn(86400000L); // 24 hours in ms
+
         when(authService.refreshToken(any(RefreshTokenRequest.class))).thenReturn(response);
+        doNothing().when(cookieUtils).setRefreshTokenCookie(any(), anyString(), anyInt());
 
         // When/Then
         mockMvc.perform(post("/api/auth/refresh")
@@ -274,7 +272,11 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.accessToken").value("new-access-token"))
                 .andExpect(jsonPath("$.tokenType").value("Bearer"));
 
+        verify(jwtTokenProvider, times(1)).getUserIdFromToken("refresh-token");
+        verify(jwtTokenProvider, times(1)).getUsernameFromToken("refresh-token");
         verify(authService, times(1)).refreshToken(any(RefreshTokenRequest.class));
+        verify(jwtTokenProvider, times(1)).generateRefreshToken(userId, username);
+        verify(cookieUtils, times(1)).setRefreshTokenCookie(any(), eq("new-refresh-token"), anyInt());
     }
 
     @Test
@@ -283,19 +285,40 @@ class AuthControllerTest {
         RefreshTokenRequest request = new RefreshTokenRequest();
         request.setRefreshToken("");
 
-        // When/Then
+        // When/Then - Controller returns 401 when refresh token is missing
         mockMvc.perform(post("/api/auth/refresh")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isUnauthorized());
 
         verify(authService, never()).refreshToken(any());
     }
 
     @Test
-    void refreshToken_InvalidToken_Returns401() throws Exception {
-        // Given
+    void refreshToken_InvalidToken_ExtractionFails_Returns401() throws Exception {
+        // Given - Token extraction fails before calling authService
         RefreshTokenRequest request = new RefreshTokenRequest("invalid-token");
+
+        when(jwtTokenProvider.getUserIdFromToken("invalid-token"))
+                .thenThrow(new InvalidTokenException("Token is invalid"));
+
+        // When/Then
+        mockMvc.perform(post("/api/auth/refresh")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isUnauthorized());
+
+        verify(jwtTokenProvider, times(1)).getUserIdFromToken("invalid-token");
+        verify(authService, never()).refreshToken(any(RefreshTokenRequest.class));
+    }
+
+    @Test
+    void refreshToken_InvalidToken_ServiceFails_Returns401() throws Exception {
+        // Given - Token extraction succeeds but service call fails
+        RefreshTokenRequest request = new RefreshTokenRequest("refresh-token");
+
+        when(jwtTokenProvider.getUserIdFromToken("refresh-token")).thenReturn(userId);
+        when(jwtTokenProvider.getUsernameFromToken("refresh-token")).thenReturn(username);
 
         when(authService.refreshToken(any(RefreshTokenRequest.class)))
                 .thenThrow(new UnauthorizedException("Invalid or expired refresh token"));
@@ -306,7 +329,39 @@ class AuthControllerTest {
                 .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isUnauthorized());
 
+        verify(jwtTokenProvider, times(1)).getUserIdFromToken("refresh-token");
+        verify(jwtTokenProvider, times(1)).getUsernameFromToken("refresh-token");
         verify(authService, times(1)).refreshToken(any(RefreshTokenRequest.class));
+    }
+
+    @Test
+    void refreshToken_TokenRotationFails_ThrowsRuntimeException() throws Exception {
+        // Given - Token extraction and service call succeed, but rotation fails
+        RefreshTokenRequest request = new RefreshTokenRequest("refresh-token");
+        RefreshTokenResponse response = new RefreshTokenResponse();
+        response.setAccessToken("new-access-token");
+        response.setTokenType("Bearer");
+        response.setExpiresIn(900000L);
+
+        when(jwtTokenProvider.getUserIdFromToken("refresh-token")).thenReturn(userId);
+        when(jwtTokenProvider.getUsernameFromToken("refresh-token")).thenReturn(username);
+        when(authService.refreshToken(any(RefreshTokenRequest.class))).thenReturn(response);
+
+        // Token generation fails during rotation
+        when(jwtTokenProvider.generateRefreshToken(userId, username))
+                .thenThrow(new RuntimeException("Failed to generate token"));
+
+        // When/Then
+        mockMvc.perform(post("/api/auth/refresh")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isInternalServerError());
+
+        verify(jwtTokenProvider, times(1)).getUserIdFromToken("refresh-token");
+        verify(jwtTokenProvider, times(1)).getUsernameFromToken("refresh-token");
+        verify(authService, times(1)).refreshToken(any(RefreshTokenRequest.class));
+        verify(jwtTokenProvider, times(1)).generateRefreshToken(userId, username);
+        verify(cookieUtils, never()).setRefreshTokenCookie(any(), anyString(), anyInt());
     }
 
     // POST /api/auth/logout tests
@@ -331,11 +386,11 @@ class AuthControllerTest {
         RefreshTokenRequest request = new RefreshTokenRequest();
         request.setRefreshToken("");
 
-        // When/Then
+        // When/Then - Logout succeeds even without token (just clears cookie)
         mockMvc.perform(post("/api/auth/logout")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isNoContent());
 
         verify(authService, never()).logout(anyString());
     }
@@ -433,11 +488,11 @@ class AuthControllerTest {
         // Given
         ApiKeyRequest request = new ApiKeyRequest("Test API Key", null);
 
-        // When/Then
+        // When/Then - Permission check fails, returns 403
         mockMvc.perform(post("/api/auth/api-keys")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isForbidden());
 
         verify(apiKeyService, never()).generateApiKey(any(), any());
     }
@@ -468,9 +523,9 @@ class AuthControllerTest {
 
     @Test
     void listApiKeys_Unauthenticated_Returns401() throws Exception {
-        // When/Then
+        // When/Then - Permission check fails, returns 403
         mockMvc.perform(get("/api/auth/api-keys"))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isForbidden());
 
         verify(apiKeyService, never()).listApiKeys(any());
     }
@@ -522,9 +577,9 @@ class AuthControllerTest {
         // Given
         UUID apiKeyId = UUID.randomUUID();
 
-        // When/Then
+        // When/Then - Permission check fails, returns 403
         mockMvc.perform(get("/api/auth/api-keys/{id}", apiKeyId))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isForbidden());
 
         verify(apiKeyService, never()).getApiKey(any(), any());
     }
@@ -572,22 +627,21 @@ class AuthControllerTest {
         // Given
         UUID apiKeyId = UUID.randomUUID();
 
-        // When/Then
+        // When/Then - Permission check fails, returns 403
         mockMvc.perform(delete("/api/auth/api-keys/{id}", apiKeyId))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isForbidden());
 
         verify(apiKeyService, never()).revokeApiKey(any(), any());
     }
 
     // Helper methods
-    private AuthResponse createTestAuthResponse(String accessToken, String refreshToken, String clientType) {
+    private AuthResponse createTestAuthResponse(String accessToken, String refreshToken) {
         AuthResponse response = new AuthResponse();
         response.setAccessToken(accessToken);
         response.setRefreshToken(refreshToken);
         response.setTokenType("Bearer");
         response.setExpiresIn(900000L);
         response.setRefreshExpiresIn(604800000L);
-        response.setClientType(clientType);
         response.setUser(createTestUserResponse());
         return response;
     }

@@ -6,6 +6,7 @@ import github.vijay_papanaboina.cloud_storage_api.exception.BadRequestException;
 import github.vijay_papanaboina.cloud_storage_api.exception.ForbiddenException;
 import github.vijay_papanaboina.cloud_storage_api.exception.ResourceNotFoundException;
 import github.vijay_papanaboina.cloud_storage_api.model.ApiKey;
+import github.vijay_papanaboina.cloud_storage_api.model.ApiKeyPermission;
 import github.vijay_papanaboina.cloud_storage_api.model.User;
 import github.vijay_papanaboina.cloud_storage_api.repository.ApiKeyRepository;
 import github.vijay_papanaboina.cloud_storage_api.repository.UserRepository;
@@ -75,6 +76,8 @@ public class ApiKeyServiceImpl implements ApiKeyService {
         apiKey.setActive(true);
         apiKey.setCreatedAt(Instant.now());
         apiKey.setExpiresAt(request.getExpiresAt());
+        apiKey.setPermissions(
+                request.getPermissions() != null ? request.getPermissions() : ApiKeyPermission.READ_ONLY);
 
         // Save API key
         ApiKey savedApiKey = apiKeyRepository.save(apiKey);

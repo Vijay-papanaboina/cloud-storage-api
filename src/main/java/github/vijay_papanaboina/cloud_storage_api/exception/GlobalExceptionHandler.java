@@ -153,6 +153,21 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(error);
     }
 
+    @ExceptionHandler(TokenRotationException.class)
+    public ResponseEntity<ErrorResponse> handleTokenRotationException(
+            TokenRotationException ex, HttpServletRequest request) {
+        log.error("Token rotation error: {}", ex.getMessage(), ex);
+        ErrorResponse error = new ErrorResponse();
+        error.setTimestamp(Instant.now());
+        error.setStatus(HttpStatus.INTERNAL_SERVER_ERROR.value());
+        error.setError("Internal Server Error");
+        error.setMessage(ex.getMessage());
+        error.setMessage("Token rotation error occurred");
+        error.setPath(request.getRequestURI());
+        error.setErrorCode(ex.getErrorCode() != null ? ex.getErrorCode() : "TOKEN_ROTATION_ERROR");
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ErrorResponse> handleMethodArgumentNotValid(
             MethodArgumentNotValidException ex, HttpServletRequest request) {

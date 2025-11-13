@@ -1,7 +1,6 @@
 package github.vijay_papanaboina.cloud_storage_api.security;
 
 import github.vijay_papanaboina.cloud_storage_api.exception.InvalidTokenException;
-import github.vijay_papanaboina.cloud_storage_api.model.ClientType;
 import github.vijay_papanaboina.cloud_storage_api.model.TokenType;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.ExpiredJwtException;
@@ -18,7 +17,9 @@ import org.springframework.stereotype.Component;
 import javax.crypto.SecretKey;
 import jakarta.annotation.PostConstruct;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -29,6 +30,12 @@ public class JwtTokenProviderImpl implements JwtTokenProvider {
 
     @Value("${app.security.jwt.secret}")
     private String jwtSecret;
+
+    @Value("${app.security.jwt.access-token-expiration-web:900000}") // 15 minutes default
+    private long accessTokenExpiration;
+
+    @Value("${app.security.jwt.refresh-token-expiration-web:604800000}") // 7 days default
+    private long refreshTokenExpiration;
 
     private SecretKey signingKey;
 
@@ -55,34 +62,48 @@ public class JwtTokenProviderImpl implements JwtTokenProvider {
     }
 
     @Override
-    public String generateAccessToken(UUID userId, String username, ClientType clientType) {
-        ClientType effectiveClientType = clientType != null ? clientType : ClientType.WEB;
-        long expiration = getTokenExpiration(effectiveClientType, TokenType.ACCESS);
+    public String generateAccessToken(UUID userId, String username) {
+        // Default: grant all permissions to JWT-authenticated users
+        // This maintains current behavior while using explicit permissions
+        List<String> defaultAuthorities = List.of(
+                "ROLE_READ",
+                "ROLE_WRITE",
+                "ROLE_DELETE",
+                "ROLE_MANAGE_API_KEYS");
+        return generateAccessToken(userId, username, defaultAuthorities);
+    }
+
+    @Override
+    public String generateAccessToken(UUID userId, String username, List<String> authorities) {
+        long expiration = getTokenExpiration(TokenType.ACCESS);
         Date now = new Date();
         Date expiryDate = new Date(now.getTime() + expiration);
 
-        return Jwts.builder()
+        var builder = Jwts.builder()
                 .subject(userId.toString())
                 .claim("username", username)
-                .claim("clientType", effectiveClientType.name())
                 .claim("type", "access")
                 .issuedAt(now)
-                .expiration(expiryDate)
-                .signWith(getSigningKey())
+                .expiration(expiryDate);
+
+        // Add authorities claim if provided
+        if (authorities != null && !authorities.isEmpty()) {
+            builder.claim("authorities", authorities);
+        }
+
+        return builder.signWith(getSigningKey())
                 .compact();
     }
 
     @Override
-    public String generateRefreshToken(UUID userId, String username, ClientType clientType) {
-        ClientType effectiveClientType = clientType != null ? clientType : ClientType.WEB;
-        long expiration = getTokenExpiration(effectiveClientType, TokenType.REFRESH);
+    public String generateRefreshToken(UUID userId, String username) {
+        long expiration = getTokenExpiration(TokenType.REFRESH);
         Date now = new Date();
         Date expiryDate = new Date(now.getTime() + expiration);
 
         return Jwts.builder()
                 .subject(userId.toString())
                 .claim("username", username)
-                .claim("clientType", effectiveClientType.name())
                 .claim("type", "refresh")
                 .issuedAt(now)
                 .expiration(expiryDate)
@@ -129,31 +150,42 @@ public class JwtTokenProviderImpl implements JwtTokenProvider {
     }
 
     @Override
-    public ClientType getClientTypeFromToken(String token) throws InvalidTokenException {
+    public List<String> getAuthoritiesFromToken(String token) throws InvalidTokenException {
         Claims claims = getClaimsFromToken(token);
-        String clientTypeStr = claims.get("clientType", String.class);
-        // Client type can be null, default to WEB if not present
-        if (clientTypeStr == null || clientTypeStr.isEmpty()) {
-            return ClientType.WEB;
+        Object authoritiesObj = claims.get("authorities");
+
+        if (authoritiesObj == null) {
+            // Backward compatibility: if no authorities claim, return empty list
+            // This will cause permission checks to fail (fail-closed)
+            return new ArrayList<>();
         }
-        try {
-            return ClientType.valueOf(clientTypeStr);
-        } catch (IllegalArgumentException e) {
-            // If invalid value in token, default to WEB
-            log.warn("Invalid client type in token: {}, defaulting to WEB", clientTypeStr);
-            return ClientType.WEB;
+
+        if (authoritiesObj instanceof List) {
+            List<?> authoritiesList = (List<?>) authoritiesObj;
+            List<String> authorities = new ArrayList<>();
+            for (Object authority : authoritiesList) {
+                if (authority instanceof String) {
+                    authorities.add((String) authority);
+                } else {
+                    throw new InvalidTokenException("Invalid authority type in token: expected String but found "
+                            + authority.getClass().getSimpleName());
+
+                }
+            }
+            return authorities;
         }
+
+        throw new InvalidTokenException("Invalid authorities format in token");
     }
 
     @Override
-    public long getTokenExpiration(ClientType clientType, TokenType tokenType) {
-        Objects.requireNonNull(clientType, "clientType must not be null");
+    public long getTokenExpiration(TokenType tokenType) {
         Objects.requireNonNull(tokenType, "tokenType must not be null");
 
         if (tokenType == TokenType.ACCESS) {
-            return clientType.getAccessTokenExpiration().toMillis();
+            return accessTokenExpiration;
         } else if (tokenType == TokenType.REFRESH) {
-            return clientType.getRefreshTokenExpiration().toMillis();
+            return refreshTokenExpiration;
         } else {
             throw new IllegalArgumentException("Unsupported token type: " + tokenType);
         }

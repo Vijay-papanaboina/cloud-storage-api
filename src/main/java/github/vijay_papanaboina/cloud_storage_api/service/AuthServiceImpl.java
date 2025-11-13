@@ -6,7 +6,6 @@ import github.vijay_papanaboina.cloud_storage_api.exception.ConflictException;
 import github.vijay_papanaboina.cloud_storage_api.exception.InvalidTokenException;
 import github.vijay_papanaboina.cloud_storage_api.exception.ResourceNotFoundException;
 import github.vijay_papanaboina.cloud_storage_api.exception.UnauthorizedException;
-import github.vijay_papanaboina.cloud_storage_api.model.ClientType;
 import github.vijay_papanaboina.cloud_storage_api.model.TokenType;
 import github.vijay_papanaboina.cloud_storage_api.model.User;
 import github.vijay_papanaboina.cloud_storage_api.repository.UserRepository;
@@ -59,16 +58,13 @@ public class AuthServiceImpl implements AuthService {
             throw new UnauthorizedException("Invalid username or password");
         }
 
-        // Convert and normalize client type
-        ClientType clientType = parseClientType(request.getClientType());
-
         // Generate tokens
-        String accessToken = jwtTokenProvider.generateAccessToken(user.getId(), user.getUsername(), clientType);
-        String refreshToken = jwtTokenProvider.generateRefreshToken(user.getId(), user.getUsername(), clientType);
+        String accessToken = jwtTokenProvider.generateAccessToken(user.getId(), user.getUsername());
+        String refreshToken = jwtTokenProvider.generateRefreshToken(user.getId(), user.getUsername());
 
         // Get token expiration times
-        long accessTokenExpiration = jwtTokenProvider.getTokenExpiration(clientType, TokenType.ACCESS);
-        long refreshTokenExpiration = jwtTokenProvider.getTokenExpiration(clientType, TokenType.REFRESH);
+        long accessTokenExpiration = jwtTokenProvider.getTokenExpiration(TokenType.ACCESS);
+        long refreshTokenExpiration = jwtTokenProvider.getTokenExpiration(TokenType.REFRESH);
 
         // Update last login timestamp
         user.setLastLoginAt(Instant.now());
@@ -90,7 +86,6 @@ public class AuthServiceImpl implements AuthService {
         response.setTokenType(AuthResponse.DEFAULT_TOKEN_TYPE);
         response.setExpiresIn(accessTokenExpiration);
         response.setRefreshExpiresIn(refreshTokenExpiration);
-        response.setClientType(clientType.name());
         response.setUser(userResponse);
 
         log.info("User logged in successfully: userId={}", user.getId());
@@ -155,11 +150,9 @@ public class AuthServiceImpl implements AuthService {
         // Extract user information from token
         UUID userId;
         String username;
-        ClientType clientType;
         try {
             userId = jwtTokenProvider.getUserIdFromToken(request.getRefreshToken());
             username = jwtTokenProvider.getUsernameFromToken(request.getRefreshToken());
-            clientType = jwtTokenProvider.getClientTypeFromToken(request.getRefreshToken());
         } catch (InvalidTokenException e) {
             log.warn("Invalid token during refresh: {}", e.getMessage());
             throw new UnauthorizedException("Invalid or expired refresh token", e);
@@ -179,8 +172,8 @@ public class AuthServiceImpl implements AuthService {
         }
 
         // Generate new access token
-        String accessToken = jwtTokenProvider.generateAccessToken(userId, username, clientType);
-        long accessTokenExpiration = jwtTokenProvider.getTokenExpiration(clientType, TokenType.ACCESS);
+        String accessToken = jwtTokenProvider.generateAccessToken(userId, username);
+        long accessTokenExpiration = jwtTokenProvider.getTokenExpiration(TokenType.ACCESS);
 
         // Build response
         RefreshTokenResponse response = new RefreshTokenResponse();
@@ -190,25 +183,6 @@ public class AuthServiceImpl implements AuthService {
 
         log.info("Token refreshed successfully: userId={}", userId);
         return response;
-    }
-
-    /**
-     * Parse a string client type to ClientType enum.
-     * Defaults to WEB if the string is null, empty, or invalid.
-     *
-     * @param clientTypeStr String representation of client type
-     * @return ClientType enum value
-     */
-    private ClientType parseClientType(String clientTypeStr) {
-        if (clientTypeStr == null || clientTypeStr.isEmpty()) {
-            return ClientType.WEB;
-        }
-        try {
-            return ClientType.valueOf(clientTypeStr.toUpperCase());
-        } catch (IllegalArgumentException e) {
-            log.warn("Invalid client type: {}, defaulting to WEB", clientTypeStr);
-            return ClientType.WEB;
-        }
     }
 
     @Override

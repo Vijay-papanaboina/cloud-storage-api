@@ -48,13 +48,19 @@ public class ApiKey {
     @Column(name = "last_used_at")
     private Instant lastUsedAt;
 
+    @NotNull
+    @Enumerated(EnumType.STRING)
+    @Column(name = "permissions", nullable = false, length = 20)
+    private ApiKeyPermission permissions = ApiKeyPermission.FULL_ACCESS;
+
     // Constructors
     public ApiKey() {
     }
 
-    public ApiKey(String key, User user) {
+    public ApiKey(String key, User user, ApiKeyPermission permissions) {
         this.key = key;
         this.user = user;
+        this.permissions = permissions;
     }
 
     // Getters and Setters
@@ -122,6 +128,14 @@ public class ApiKey {
         this.lastUsedAt = lastUsedAt;
     }
 
+    public ApiKeyPermission getPermissions() {
+        return permissions;
+    }
+
+    public void setPermissions(ApiKeyPermission permissions) {
+        this.permissions = permissions;
+    }
+
     // equals, hashCode, toString
     @Override
     public boolean equals(Object o) {
@@ -142,9 +156,10 @@ public class ApiKey {
     public String toString() {
         return "ApiKey{" +
                 "id=" + id +
-                ", key='" + key + '\'' +
+                ", key='***REDACTED***'" + '\'' +
                 ", name='" + name + '\'' +
                 ", active=" + active +
+                ", permissions=" + permissions +
                 '}';
     }
 }

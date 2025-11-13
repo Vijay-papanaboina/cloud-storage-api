@@ -12,7 +12,7 @@ public interface AuthService {
     /**
      * Authenticate user and return JWT tokens
      *
-     * @param request Login request with username, password, and optional clientType
+     * @param request Login request with username and password
      * @return AuthResponse with access token, refresh token, and user information
      * @throws UnauthorizedException if credentials are invalid or user is inactive
      * @throws BadRequestException   if request validation fails

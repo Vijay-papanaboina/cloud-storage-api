@@ -1,7 +1,6 @@
 package github.vijay_papanaboina.cloud_storage_api.integration;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import github.vijay_papanaboina.cloud_storage_api.model.ClientType;
 import github.vijay_papanaboina.cloud_storage_api.model.User;
 import github.vijay_papanaboina.cloud_storage_api.repository.ApiKeyRepository;
 import github.vijay_papanaboina.cloud_storage_api.repository.BatchJobRepository;
@@ -92,7 +91,6 @@ public abstract class BaseIntegrationTest {
     protected String generateAccessToken(User user) {
         return jwtTokenProvider.generateAccessToken(
                 user.getId(),
-                user.getUsername(),
-                ClientType.WEB);
+                user.getUsername());
     }
 }

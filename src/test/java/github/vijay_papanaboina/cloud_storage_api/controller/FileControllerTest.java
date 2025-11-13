@@ -276,7 +276,7 @@ class FileControllerTest {
         // When/Then
         mockMvc.perform(multipart("/api/files/upload")
                 .file(file))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isForbidden());
 
         verify(fileService, never()).upload(any(), any(), any(), any());
     }
@@ -457,7 +457,7 @@ class FileControllerTest {
     void listFiles_Unauthenticated_Returns401() throws Exception {
         // When/Then
         mockMvc.perform(get("/api/files"))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isForbidden());
 
         verify(fileService, never()).list(any(), any(), any(), any());
     }
@@ -505,7 +505,7 @@ class FileControllerTest {
     void getFile_Unauthenticated_Returns401() throws Exception {
         // When/Then
         mockMvc.perform(get("/api/files/{id}", fileId))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isForbidden());
 
         verify(fileService, never()).getById(any(), any());
     }
@@ -590,7 +590,7 @@ class FileControllerTest {
     void getFileUrl_Unauthenticated_Returns401() throws Exception {
         // When/Then
         mockMvc.perform(get("/api/files/{id}/url", fileId))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isForbidden());
 
         verify(fileService, never()).getSignedDownloadUrl(any(), any(), anyInt());
     }
@@ -641,7 +641,7 @@ class FileControllerTest {
     void downloadFile_Unauthenticated_Returns401() throws Exception {
         // When/Then
         mockMvc.perform(get("/api/files/{id}/download", fileId))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isForbidden());
 
         verify(fileService, never()).getById(any(), any());
         verify(fileService, never()).download(any(), any());
@@ -768,7 +768,7 @@ class FileControllerTest {
         mockMvc.perform(put("/api/files/{id}", fileId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isForbidden());
 
         verify(fileService, never()).update(any(), any(), any());
     }
@@ -812,7 +812,7 @@ class FileControllerTest {
     void deleteFile_Unauthenticated_Returns401() throws Exception {
         // When/Then
         mockMvc.perform(delete("/api/files/{id}", fileId))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isForbidden());
 
         verify(fileService, never()).delete(any(), any());
     }
@@ -889,7 +889,7 @@ class FileControllerTest {
         mockMvc.perform(post("/api/files/{id}/transform", fileId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isForbidden());
 
         verify(fileService, never()).transform(any(), any(), any());
     }
@@ -944,7 +944,7 @@ class FileControllerTest {
     void getTransformUrl_Unauthenticated_Returns401() throws Exception {
         // When/Then
         mockMvc.perform(get("/api/files/{id}/transform", fileId))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isForbidden());
 
         verify(fileService, never()).getTransformUrl(any(), any(), any(), any(), any(), any(), any());
     }
@@ -1113,7 +1113,7 @@ class FileControllerTest {
         // When/Then
         mockMvc.perform(get("/api/files/search")
                 .param("q", "test"))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isForbidden());
 
         verify(fileService, never()).search(any(), any(), any(), any(), any());
     }
@@ -1147,7 +1147,7 @@ class FileControllerTest {
     void getFileStatistics_Unauthenticated_Returns401() throws Exception {
         // When/Then
         mockMvc.perform(get("/api/files/statistics"))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isForbidden());
 
         verify(fileService, never()).getStatistics(any());
     }

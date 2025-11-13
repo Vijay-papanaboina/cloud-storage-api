@@ -81,7 +81,9 @@ class ApiKeyServiceImplTest {
         assertThat(response.getKey()).hasSize(32);
         assertThat(response.getName()).isEqualTo("Test API Key");
         assertThat(response.getActive()).isTrue();
-        assertThat(response.getExpiresAt()).isEqualTo(request.getExpiresAt());
+        // Verify expiration is set (30 days from now, approximately)
+        assertThat(response.getExpiresAt()).isNotNull();
+        assertThat(response.getExpiresAt()).isAfter(Instant.now());
         assertThat(response.getCreatedAt()).isNotNull();
 
         verify(userRepository, times(1)).findById(userId);
@@ -183,15 +185,26 @@ class ApiKeyServiceImplTest {
     }
 
     @Test
-    void generateApiKey_PastExpiration_ThrowsBadRequestException() {
-        // Given
-        ApiKeyRequest request = createTestApiKeyRequest("Test API Key", Instant.now().minus(Duration.ofDays(1)));
+    void generateApiKey_InvalidExpirationDays_ThrowsBadRequestException() {
+        // Given - invalid expiresInDays value (not 30, 60, or 90)
+        // Use reflection to bypass setter validation and set invalid value directly
+        ApiKeyRequest request = new ApiKeyRequest();
+        request.setName("Test API Key");
+        try {
+            java.lang.reflect.Field field = ApiKeyRequest.class.getDeclaredField("expiresInDays");
+            field.setAccessible(true);
+            field.set(request, 45); // Invalid value
+        } catch (Exception e) {
+            org.junit.jupiter.api.Assertions
+                    .fail("Failed to set invalid expiresInDays via reflection: " + e.getMessage());
+        }
+
         when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
 
         // When/Then
         assertThatThrownBy(() -> apiKeyService.generateApiKey(request, userId))
                 .isInstanceOf(BadRequestException.class)
-                .hasMessageContaining("Expiration date cannot be in the past");
+                .hasMessageContaining("expiresInDays must be one of: 30, 60, or 90 days");
 
         verify(userRepository, times(1)).findById(userId);
         verify(apiKeyRepository, never()).save(any());
@@ -202,7 +215,8 @@ class ApiKeyServiceImplTest {
         // Given
         ApiKeyRequest request = createTestApiKeyRequest("Test API Key", null);
         when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
-        // First call returns existing key (collision), second call returns empty (success)
+        // First call returns existing key (collision), second call returns empty
+        // (success)
         when(apiKeyRepository.findByKey(anyString()))
                 .thenReturn(Optional.of(createTestApiKey(UUID.randomUUID(), testUser)))
                 .thenReturn(Optional.empty());
@@ -534,8 +548,18 @@ class ApiKeyServiceImplTest {
     private ApiKeyRequest createTestApiKeyRequest(String name, Instant expiresAt) {
         ApiKeyRequest request = new ApiKeyRequest();
         request.setName(name);
-        request.setExpiresAt(expiresAt);
+        // Convert Instant to days if provided
+        if (expiresAt != null) {
+            long days = (expiresAt.getEpochSecond() - Instant.now().getEpochSecond()) / (24 * 60 * 60);
+            // Round to nearest allowed value (30, 60, or 90)
+            if (days <= 30) {
+                request.setExpiresInDays(30);
+            } else if (days <= 60) {
+                request.setExpiresInDays(60);
+            } else {
+                request.setExpiresInDays(90);
+            }
+        }
         return request;
     }
 }
-

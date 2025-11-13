@@ -21,6 +21,7 @@ import java.time.Instant;
 import java.util.Base64;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -59,10 +60,19 @@ public class ApiKeyServiceImpl implements ApiKeyService {
             throw new BadRequestException("User account is inactive");
         }
 
-        // Validate expiration date if provided
-        if (request.getExpiresAt() != null && request.getExpiresAt().isBefore(Instant.now())) {
-            log.warn("Attempt to create API key with past expiration date: userId={}", userId);
-            throw new BadRequestException("Expiration date cannot be in the past");
+        // Validate and calculate expiration date if provided
+        Instant expiresAt = null;
+        if (request.getExpiresInDays() != null) {
+            // Validate that expiresInDays is one of the allowed values (30, 60, or 90)
+            if (!Set.of(30, 60, 90).contains(request.getExpiresInDays())) {
+                log.warn("Invalid expiresInDays value: userId={}, expiresInDays={}", userId,
+                        request.getExpiresInDays());
+                throw new BadRequestException("expiresInDays must be one of: 30, 60, or 90 days");
+            }
+            // Calculate expiration date: current time + expiresInDays
+            expiresAt = Instant.now().plusSeconds(request.getExpiresInDays() * 24L * 60L * 60L);
+            log.info("API key will expire in {} days: userId={}, expiresAt={}", request.getExpiresInDays(), userId,
+                    expiresAt);
         }
 
         // Generate unique API key
@@ -75,7 +85,7 @@ public class ApiKeyServiceImpl implements ApiKeyService {
         apiKey.setName(request.getName());
         apiKey.setActive(true);
         apiKey.setCreatedAt(Instant.now());
-        apiKey.setExpiresAt(request.getExpiresAt());
+        apiKey.setExpiresAt(expiresAt);
         apiKey.setPermissions(
                 request.getPermissions() != null ? request.getPermissions() : ApiKeyPermission.READ_ONLY);
 

@@ -29,6 +29,9 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
+import github.vijay_papanaboina.cloud_storage_api.model.File;
+import github.vijay_papanaboina.cloud_storage_api.repository.FileRepository;
+
 /**
  * REST controller for file management operations.
  * Handles file upload, download, listing, metadata management, transformations,
@@ -39,10 +42,12 @@ import java.util.UUID;
 public class FileController {
 
     private final FileService fileService;
+    private final FileRepository fileRepository;
 
     @Autowired
-    public FileController(FileService fileService) {
+    public FileController(FileService fileService, FileRepository fileRepository) {
         this.fileService = fileService;
+        this.fileRepository = fileRepository;
     }
 
     /**
@@ -177,6 +182,47 @@ public class FileController {
     }
 
     /**
+     * Get file URL by filepath endpoint.
+     * Get signed download URL for a file using its full filepath.
+     *
+     * @param filepath          The full filepath (e.g., "/photos/2024/image.jpg" or
+     *                          "document.pdf" for root)
+     * @param expirationMinutes URL expiration time in minutes (default: 60)
+     * @return FileUrlResponse with signed URL and metadata
+     */
+    @GetMapping("/url-by-path")
+    public ResponseEntity<FileUrlResponse> getFileUrlByPath(
+            @RequestParam("filepath") String filepath,
+            @RequestParam(defaultValue = "60") int expirationMinutes) {
+        SecurityUtils.requirePermission("ROLE_READ");
+        UUID userId = SecurityUtils.getAuthenticatedUserId();
+        // Validate filepath parameter
+        if (filepath == null || filepath.trim().isEmpty()) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "filepath parameter is required and cannot be empty");
+        }
+        // Validate expirationMinutes: must be positive and non-zero
+        if (expirationMinutes <= 0) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "expirationMinutes must be a positive non-zero value, but got: " + expirationMinutes);
+        }
+
+        // Cap expirationMinutes to a sensible maximum (24 hours = 1440 minutes)
+        final int MAX_EXPIRATION_MINUTES = 24 * 60;
+        if (expirationMinutes > MAX_EXPIRATION_MINUTES) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "expirationMinutes cannot exceed " + MAX_EXPIRATION_MINUTES + " minutes (24 hours), but got: "
+                            + expirationMinutes);
+        }
+
+        FileUrlResponse response = fileService.getSignedDownloadUrlByFilepath(filepath, userId, expirationMinutes);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
      * Download file endpoint.
      * Download a file from Cloudinary.
      *
@@ -190,6 +236,65 @@ public class FileController {
         // Get file metadata first
         FileResponse fileMetadata = fileService.getById(id, userId);
         Resource resource = fileService.download(id, userId);
+
+        HttpHeaders headers = new HttpHeaders();
+        String contentType = fileMetadata.getContentType();
+        if (contentType != null && !contentType.isEmpty()) {
+            headers.setContentType(MediaType.parseMediaType(contentType));
+        } else {
+            headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
+        }
+        headers.setContentDispositionFormData("attachment", fileMetadata.getFilename());
+
+        return ResponseEntity.ok()
+                .headers(headers)
+                .body(resource);
+    }
+
+    /**
+     * Download file by filepath endpoint.
+     * Download a file using its full filepath (folder path + filename).
+     *
+     * @param filepath The full filepath (e.g., "/photos/2024/image.jpg" or
+     *                 "document.pdf" for root)
+     * @return File Resource with appropriate headers
+     */
+    @GetMapping("/download-by-path")
+    public ResponseEntity<Resource> downloadFileByPath(
+            @RequestParam("filepath") String filepath) {
+        SecurityUtils.requirePermission("ROLE_READ");
+        UUID userId = SecurityUtils.getAuthenticatedUserId();
+        // Validate filepath parameter
+        if (filepath == null || filepath.trim().isEmpty()) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "filepath parameter is required and cannot be empty");
+        }
+        // Parse filepath to get folder path and filename
+        String normalizedPath = filepath.trim();
+        if (normalizedPath.startsWith("/")) {
+            normalizedPath = normalizedPath.substring(1);
+        }
+        if (normalizedPath.isEmpty() || normalizedPath.endsWith("/")) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Invalid filepath: must contain a filename, not just a folder path");
+        }
+        int lastSlashIndex = normalizedPath.lastIndexOf('/');
+        String folderPath = lastSlashIndex == -1 ? null : "/" + normalizedPath.substring(0, lastSlashIndex);
+        String filename = lastSlashIndex == -1 ? normalizedPath : normalizedPath.substring(lastSlashIndex + 1);
+
+        // Get file metadata first
+        Optional<File> fileOpt = fileRepository.findByUserIdAndFolderPathAndFilenameAndDeletedFalse(
+                userId, folderPath, filename);
+        if (fileOpt.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "File not found: " + filepath);
+        }
+        File file = fileOpt.get();
+        FileResponse fileMetadata = fileService.getById(file.getId(), userId);
+
+        // Download file by filepath
+        Resource resource = fileService.downloadByFilepath(filepath, userId);
 
         HttpHeaders headers = new HttpHeaders();
         String contentType = fileMetadata.getContentType();

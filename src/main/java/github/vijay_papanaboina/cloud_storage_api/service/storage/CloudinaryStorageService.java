@@ -12,6 +12,8 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.net.HttpURLConnection;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -22,6 +24,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.time.Instant;
 import jakarta.annotation.PreDestroy;
 
 @Service
@@ -31,6 +34,7 @@ public class CloudinaryStorageService implements StorageService {
     private static final long CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes TTL for resource type cache
 
     private final Cloudinary cloudinary;
+    private final github.vijay_papanaboina.cloud_storage_api.config.CloudinaryConfig cloudinaryConfig;
     // Thread-safe cache for resource type lookups: publicId -> CacheEntry
     private final ConcurrentHashMap<String, CacheEntry> resourceTypeCache = new ConcurrentHashMap<>();
     // Thread-safe metrics tracking for resource type success counts: resourceType
@@ -40,8 +44,10 @@ public class CloudinaryStorageService implements StorageService {
     private final ExecutorService downloadExecutor = Executors.newFixedThreadPool(10);
 
     @Autowired
-    public CloudinaryStorageService(Cloudinary cloudinary) {
+    public CloudinaryStorageService(Cloudinary cloudinary,
+            github.vijay_papanaboina.cloud_storage_api.config.CloudinaryConfig cloudinaryConfig) {
         this.cloudinary = cloudinary;
+        this.cloudinaryConfig = cloudinaryConfig;
     }
 
     @PreDestroy
@@ -496,6 +502,23 @@ public class CloudinaryStorageService implements StorageService {
 
     @Override
     public String generateSignedDownloadUrl(String publicId, int expirationMinutes, String resourceType) {
+        return generateSignedDownloadUrl(publicId, expirationMinutes, resourceType, null);
+    }
+
+    /**
+     * Generate signed download URL with optional format parameter.
+     * If format is provided, it will be used directly. Otherwise, format will be
+     * retrieved from Cloudinary resource details.
+     * 
+     * @param publicId          Cloudinary public ID
+     * @param expirationMinutes URL expiration time in minutes
+     * @param resourceType      Resource type (image, video, raw)
+     * @param format            Optional format. If provided, will be used directly.
+     *                          If null, will be retrieved from resource details.
+     * @return Signed download URL
+     */
+    public String generateSignedDownloadUrl(String publicId, int expirationMinutes, String resourceType,
+            String format) {
         try {
             // Validate expirationMinutes to prevent overflow
             if (expirationMinutes < 0) {
@@ -508,27 +531,96 @@ public class CloudinaryStorageService implements StorageService {
                         "expirationMinutes too large: " + expirationMinutes + " would cause overflow");
             }
 
-            // Generate private download URL with enforced expiration
-            // This approach uses privateDownload which enforces expiration via expires_at
-            // First, get resource details to extract format
-            Map<String, Object> resourceDetails = getResourceDetails(publicId, resourceType);
-            String format = (String) resourceDetails.get("format");
-
-            // Format is required for privateDownload - throw exception if missing
+            // If format is not provided, get resource details to extract format
             if (format == null || format.isEmpty()) {
-                log.error("Resource format is missing for privateDownload: publicId={}, resourceType={}", publicId,
-                        resourceType);
-                throw new StorageException(
-                        "Cannot generate signed download URL: resource format is missing for publicId: " + publicId);
+                Map<String, Object> resourceDetails = getResourceDetails(publicId, resourceType);
+                format = (String) resourceDetails.get("format");
             }
 
             // Calculate expiration time in seconds (UNIX timestamp)
             long expirationTime = System.currentTimeMillis() / 1000L + expirationSeconds;
 
-            // Generate private download URL with expiration using SDK 2.0 API
-            @SuppressWarnings("unchecked")
-            Map<String, Object> expiresOptions = ObjectUtils.asMap("expires_at", expirationTime);
-            String signedUrl = cloudinary.privateDownload(publicId, format, expiresOptions);
+            String signedUrl;
+
+            // For raw files, use Admin API to generate download URL with proper resource
+            // type
+            // privateDownload defaults to image endpoint which doesn't work for raw files
+            if ("raw".equals(resourceType)) {
+                // For raw files, use "bin" as default format if format is missing
+                // This is a safe default for binary/raw files
+                String downloadFormat = (format != null && !format.isEmpty()) ? format : "bin";
+
+                // For raw files, construct download URL manually with correct resource type
+                // privateDownload defaults to /image/download which doesn't work for raw files
+                // We need to use /raw/download endpoint with proper signing
+                try {
+                    String cloudName = cloudinaryConfig.getCloudName();
+                    String apiKey = cloudinaryConfig.getApiKey();
+                    String apiSecret = cloudinaryConfig.getApiSecret();
+                    if (cloudName == null || cloudName.isEmpty() ||
+                            apiKey == null || apiKey.isEmpty() ||
+                            apiSecret == null || apiSecret.isEmpty()) {
+                        throw new StorageException(
+                                "Cloudinary configuration is incomplete: cloudName, apiKey, and apiSecret are required");
+                    }
+
+                    // Build parameters for signature generation (must be sorted alphabetically)
+                    // timestamp: current UNIX time in seconds (used for signature generation)
+                    // expires_at: future UNIX time (timestamp + validity period)
+                    long timestamp = Instant.now().getEpochSecond();
+                    long expiresAt = timestamp + expirationSeconds;
+                    Map<String, Object> params = new HashMap<>();
+                    params.put("api_key", apiKey);
+                    params.put("expires_at", expiresAt);
+                    params.put("format", downloadFormat);
+                    params.put("public_id", publicId);
+                    params.put("timestamp", timestamp);
+
+                    // Generate signature using Cloudinary's signing method
+                    String signature = cloudinary.apiSignRequest(params, apiSecret);
+
+                    // Construct download URL:
+                    // https://api.cloudinary.com/v1_1/{cloud_name}/raw/download
+                    String baseUrl = String.format("https://api.cloudinary.com/v1_1/%s/raw/download", cloudName);
+
+                    // Build query string with URL encoding
+                    StringBuilder queryString = new StringBuilder();
+                    queryString.append("?api_key=").append(URLEncoder.encode(apiKey, StandardCharsets.UTF_8));
+                    queryString.append("&expires_at=").append(expirationTime);
+                    queryString.append("&format=").append(URLEncoder.encode(downloadFormat, StandardCharsets.UTF_8));
+                    queryString.append("&public_id=").append(URLEncoder.encode(publicId, StandardCharsets.UTF_8));
+                    queryString.append("&timestamp=").append(expirationTime);
+                    queryString.append("&signature=").append(URLEncoder.encode(signature, StandardCharsets.UTF_8));
+
+                    signedUrl = baseUrl + queryString.toString();
+
+                    log.info("Generated signed download URL for raw file: publicId={}, format={}, expiresAt={}",
+                            publicId, downloadFormat, expirationTime);
+                } catch (Exception e) {
+                    log.error("Failed to generate download URL for raw file: publicId={}, error={}",
+                            publicId, e.getMessage(), e);
+                    // Fallback: try privateDownload as last resort (may not work correctly)
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> expiresOptions = ObjectUtils.asMap("expires_at", expirationTime);
+                    signedUrl = cloudinary.privateDownload(publicId, downloadFormat, expiresOptions);
+                    log.warn("Fell back to privateDownload for raw file (may not work correctly): publicId={}",
+                            publicId);
+                }
+            } else {
+                // For image/video files, use privateDownload which requires format
+                if (format == null || format.isEmpty()) {
+                    log.error("Resource format is missing for privateDownload: publicId={}, resourceType={}", publicId,
+                            resourceType);
+                    throw new StorageException(
+                            "Cannot generate signed download URL: resource format is missing for publicId: "
+                                    + publicId);
+                }
+
+                // Generate private download URL with expiration using SDK 2.0 API
+                @SuppressWarnings("unchecked")
+                Map<String, Object> expiresOptions = ObjectUtils.asMap("expires_at", expirationTime);
+                signedUrl = cloudinary.privateDownload(publicId, format, expiresOptions);
+            }
 
             log.info(
                     "Generated signed download URL with enforced expiration: publicId={}, format={}, resourceType={}, expiresIn={} minutes (expires_at={})",

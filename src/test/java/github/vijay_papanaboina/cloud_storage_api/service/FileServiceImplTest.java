@@ -22,6 +22,7 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.time.Instant;
@@ -75,9 +76,20 @@ class FileServiceImplTest {
                 String expectedCloudinaryPath = getExpectedCloudinaryFolderPath(null);
 
                 when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
+                // Mock unique filename check - filename is available
+                when(fileRepository.findByUserIdAndFolderPathAndFilenameAndDeletedFalse(eq(userId), isNull(),
+                                eq("test.txt")))
+                                .thenReturn(Optional.empty());
+                // Mock save - called twice: once for reservation, once for update
+                when(fileRepository.save(any(File.class))).thenAnswer(invocation -> {
+                        File file = invocation.getArgument(0);
+                        if (file.getId() == null) {
+                                file.setId(fileId); // Set ID on first save (reservation)
+                        }
+                        return file;
+                });
                 when(storageService.uploadFile(any(MultipartFile.class), eq(expectedCloudinaryPath), any()))
                                 .thenReturn(cloudinaryResponse);
-                when(fileRepository.save(any(File.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
                 // When
                 FileResponse response = fileService.upload(multipartFile, Optional.empty(), Optional.empty(), userId);
@@ -91,9 +103,11 @@ class FileServiceImplTest {
                 assertThat(response.getCloudinarySecureUrl()).isNotNull();
 
                 verify(userRepository, times(1)).findById(userId);
+                verify(fileRepository, atLeastOnce()).findByUserIdAndFolderPathAndFilenameAndDeletedFalse(any(), any(),
+                                anyString());
                 verify(storageService, times(1)).uploadFile(any(MultipartFile.class), eq(expectedCloudinaryPath),
                                 any());
-                verify(fileRepository, times(1)).save(any(File.class));
+                verify(fileRepository, times(2)).save(any(File.class)); // Reservation + update
         }
 
         @Test
@@ -104,9 +118,20 @@ class FileServiceImplTest {
                 String expectedCloudinaryPath = getExpectedCloudinaryFolderPath(folderPath);
 
                 when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
+                // Mock unique filename check - filename is available
+                when(fileRepository.findByUserIdAndFolderPathAndFilenameAndDeletedFalse(eq(userId), eq(folderPath),
+                                eq("test.txt")))
+                                .thenReturn(Optional.empty());
+                // Mock save - called twice: once for reservation, once for update
+                when(fileRepository.save(any(File.class))).thenAnswer(invocation -> {
+                        File file = invocation.getArgument(0);
+                        if (file.getId() == null) {
+                                file.setId(fileId); // Set ID on first save (reservation)
+                        }
+                        return file;
+                });
                 when(storageService.uploadFile(any(), eq(expectedCloudinaryPath), any()))
                                 .thenReturn(cloudinaryResponse);
-                when(fileRepository.save(any(File.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
                 // When
                 FileResponse response = fileService.upload(multipartFile, Optional.of(folderPath), Optional.empty(),
@@ -117,8 +142,10 @@ class FileServiceImplTest {
                 assertThat(response.getFolderPath()).isEqualTo(folderPath);
 
                 verify(userRepository, times(1)).findById(userId);
+                verify(fileRepository, atLeastOnce()).findByUserIdAndFolderPathAndFilenameAndDeletedFalse(any(), any(),
+                                anyString());
                 verify(storageService, times(1)).uploadFile(any(), eq(expectedCloudinaryPath), any());
-                verify(fileRepository, times(1)).save(any(File.class));
+                verify(fileRepository, times(2)).save(any(File.class)); // Reservation + update
         }
 
         @Test
@@ -158,8 +185,20 @@ class FileServiceImplTest {
                 MultipartFile multipartFile = createTestMultipartFile("test.txt");
 
                 when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
+                // Mock unique filename check - filename is available
+                when(fileRepository.findByUserIdAndFolderPathAndFilenameAndDeletedFalse(eq(userId), isNull(),
+                                eq("test.txt")))
+                                .thenReturn(Optional.empty());
+                // Mock save for reservation
+                when(fileRepository.save(any(File.class))).thenAnswer(invocation -> {
+                        File file = invocation.getArgument(0);
+                        file.setId(fileId); // Set ID on save
+                        return file;
+                });
                 when(storageService.uploadFile(any(), any(), any()))
                                 .thenThrow(new StorageException("Cloudinary upload failed"));
+                // Mock delete for cleanup
+                doNothing().when(fileRepository).delete(any(File.class));
 
                 // When/Then
                 assertThatThrownBy(() -> fileService.upload(multipartFile, Optional.empty(), Optional.empty(), userId))
@@ -167,8 +206,11 @@ class FileServiceImplTest {
                                 .hasMessageContaining("Cloudinary upload failed");
 
                 verify(userRepository, times(1)).findById(userId);
+                verify(fileRepository, atLeastOnce()).findByUserIdAndFolderPathAndFilenameAndDeletedFalse(any(), any(),
+                                anyString());
+                verify(fileRepository, times(1)).save(any(File.class)); // Reservation only
                 verify(storageService, times(1)).uploadFile(any(), any(), any());
-                verify(fileRepository, never()).save(any());
+                verify(fileRepository, times(1)).delete(any(File.class)); // Cleanup after failure
         }
 
         @Test
@@ -252,7 +294,19 @@ class FileServiceImplTest {
                 MultipartFile multipartFile = createTestMultipartFile("test.txt");
 
                 when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
+                // Mock unique filename check - filename is available
+                when(fileRepository.findByUserIdAndFolderPathAndFilenameAndDeletedFalse(eq(userId), isNull(),
+                                eq("test.txt")))
+                                .thenReturn(Optional.empty());
+                // Mock save for reservation
+                when(fileRepository.save(any(File.class))).thenAnswer(invocation -> {
+                        File file = invocation.getArgument(0);
+                        file.setId(fileId); // Set ID on save
+                        return file;
+                });
                 when(storageService.uploadFile(any(), any(), any())).thenReturn(null);
+                // Mock delete for cleanup
+                doNothing().when(fileRepository).delete(any(File.class));
 
                 // When/Then
                 assertThatThrownBy(() -> fileService.upload(multipartFile, Optional.empty(), Optional.empty(), userId))
@@ -260,8 +314,11 @@ class FileServiceImplTest {
                                 .hasMessageContaining("upload result is null");
 
                 verify(userRepository, times(1)).findById(userId);
+                verify(fileRepository, atLeastOnce()).findByUserIdAndFolderPathAndFilenameAndDeletedFalse(any(), any(),
+                                anyString());
+                verify(fileRepository, times(1)).save(any(File.class)); // Reservation only
                 verify(storageService, times(1)).uploadFile(any(), any(), any());
-                verify(fileRepository, never()).save(any());
+                verify(fileRepository, times(1)).delete(any(File.class)); // Cleanup after failure
         }
 
         @Test
@@ -273,9 +330,20 @@ class FileServiceImplTest {
                 String expectedCloudinaryPath = getExpectedCloudinaryFolderPath(null);
 
                 when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
+                // Mock unique filename check - filename is available
+                when(fileRepository.findByUserIdAndFolderPathAndFilenameAndDeletedFalse(eq(userId), isNull(),
+                                eq(customFilename)))
+                                .thenReturn(Optional.empty());
+                // Mock save - called twice: once for reservation, once for update
+                when(fileRepository.save(any(File.class))).thenAnswer(invocation -> {
+                        File file = invocation.getArgument(0);
+                        if (file.getId() == null) {
+                                file.setId(fileId); // Set ID on first save (reservation)
+                        }
+                        return file;
+                });
                 when(storageService.uploadFile(any(MultipartFile.class), eq(expectedCloudinaryPath), any()))
                                 .thenReturn(cloudinaryResponse);
-                when(fileRepository.save(any(File.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
                 // When
                 FileResponse response = fileService.upload(multipartFile, Optional.empty(), Optional.of(customFilename),
@@ -287,9 +355,11 @@ class FileServiceImplTest {
                 assertThat(response.getContentType()).isEqualTo("text/plain");
 
                 verify(userRepository, times(1)).findById(userId);
+                verify(fileRepository, atLeastOnce()).findByUserIdAndFolderPathAndFilenameAndDeletedFalse(any(), any(),
+                                anyString());
                 verify(storageService, times(1)).uploadFile(any(MultipartFile.class), eq(expectedCloudinaryPath),
                                 any());
-                verify(fileRepository, times(1)).save(any(File.class));
+                verify(fileRepository, times(2)).save(any(File.class)); // Reservation + update
         }
 
         @Test
@@ -301,9 +371,20 @@ class FileServiceImplTest {
                 String expectedCloudinaryPath = getExpectedCloudinaryFolderPath(null);
 
                 when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
+                // Mock unique filename check - filename is available
+                when(fileRepository.findByUserIdAndFolderPathAndFilenameAndDeletedFalse(eq(userId), isNull(),
+                                eq(originalFilename)))
+                                .thenReturn(Optional.empty());
+                // Mock save - called twice: once for reservation, once for update
+                when(fileRepository.save(any(File.class))).thenAnswer(invocation -> {
+                        File file = invocation.getArgument(0);
+                        if (file.getId() == null) {
+                                file.setId(fileId); // Set ID on first save (reservation)
+                        }
+                        return file;
+                });
                 when(storageService.uploadFile(any(MultipartFile.class), eq(expectedCloudinaryPath), any()))
                                 .thenReturn(cloudinaryResponse);
-                when(fileRepository.save(any(File.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
                 // When
                 FileResponse response = fileService.upload(multipartFile, Optional.empty(), Optional.empty(), userId);
@@ -313,9 +394,11 @@ class FileServiceImplTest {
                 assertThat(response.getFilename()).isEqualTo(originalFilename); // Original filename should be preserved
 
                 verify(userRepository, times(1)).findById(userId);
+                verify(fileRepository, atLeastOnce()).findByUserIdAndFolderPathAndFilenameAndDeletedFalse(any(), any(),
+                                anyString());
                 verify(storageService, times(1)).uploadFile(any(MultipartFile.class), eq(expectedCloudinaryPath),
                                 any());
-                verify(fileRepository, times(1)).save(any(File.class));
+                verify(fileRepository, times(2)).save(any(File.class)); // Reservation + update
         }
 
         @Test
@@ -479,7 +562,7 @@ class FileServiceImplTest {
                 String expectedFullPath = getExpectedCloudinaryPublicId(testFile.getFolderPath(),
                                 testFile.getCloudinaryPublicId());
 
-                when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.of(testFile));
+                when(fileRepository.findById(fileId)).thenReturn(Optional.of(testFile));
                 when(storageService.getResourceDetails(eq(expectedFullPath))).thenReturn(resourceDetails);
                 when(storageService.generateSignedDownloadUrl(eq(expectedFullPath), eq(expirationMinutes),
                                 eq("image"))).thenReturn(signedUrl);
@@ -495,7 +578,7 @@ class FileServiceImplTest {
                 assertThat(response.getResourceType()).isEqualTo("image");
                 assertThat(response.getExpiresAt()).isNotNull();
 
-                verify(fileRepository, times(1)).findByIdAndUserId(fileId, userId);
+                verify(fileRepository, times(1)).findById(fileId);
                 verify(storageService, times(1)).getResourceDetails(eq(expectedFullPath));
                 verify(storageService, times(1)).generateSignedDownloadUrl(eq(expectedFullPath),
                                 eq(expirationMinutes), eq("image"));
@@ -504,27 +587,29 @@ class FileServiceImplTest {
         @Test
         void getSignedDownloadUrl_FileNotFound_ThrowsResourceNotFoundException() {
                 // Given
-                when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.empty());
+                when(fileRepository.findById(fileId)).thenReturn(Optional.empty());
 
                 // When/Then
                 assertThatThrownBy(() -> fileService.getSignedDownloadUrl(fileId, userId, 60))
                                 .isInstanceOf(CloudFileNotFoundException.class);
 
-                verify(fileRepository, times(1)).findByIdAndUserId(fileId, userId);
+                verify(fileRepository, times(1)).findById(fileId);
                 verify(storageService, never()).getResourceDetails(any());
         }
 
         @Test
-        void getSignedDownloadUrl_BelongsToAnotherUser_ThrowsResourceNotFoundException() {
+        void getSignedDownloadUrl_BelongsToAnotherUser_ThrowsAccessDeniedException() {
                 // Given
                 UUID otherUserId = UUID.randomUUID();
-                when(fileRepository.findByIdAndUserId(fileId, otherUserId)).thenReturn(Optional.empty());
+                // File exists but belongs to a different user
+                when(fileRepository.findById(fileId)).thenReturn(Optional.of(testFile));
 
                 // When/Then
                 assertThatThrownBy(() -> fileService.getSignedDownloadUrl(fileId, otherUserId, 60))
-                                .isInstanceOf(CloudFileNotFoundException.class);
+                                .isInstanceOf(AccessDeniedException.class)
+                                .hasMessageContaining("Access denied");
 
-                verify(fileRepository, times(1)).findByIdAndUserId(fileId, otherUserId);
+                verify(fileRepository, times(1)).findById(fileId);
                 verify(storageService, never()).getResourceDetails(any());
         }
 
@@ -533,7 +618,7 @@ class FileServiceImplTest {
                 // Given
                 String expectedFullPath = getExpectedCloudinaryPublicId(testFile.getFolderPath(),
                                 testFile.getCloudinaryPublicId());
-                when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.of(testFile));
+                when(fileRepository.findById(fileId)).thenReturn(Optional.of(testFile));
                 when(storageService.getResourceDetails(eq(expectedFullPath)))
                                 .thenThrow(new StorageException("Storage error"));
 
@@ -542,7 +627,7 @@ class FileServiceImplTest {
                                 .isInstanceOf(StorageException.class)
                                 .hasMessageContaining("Storage error");
 
-                verify(fileRepository, times(1)).findByIdAndUserId(fileId, userId);
+                verify(fileRepository, times(1)).findById(fileId);
                 verify(storageService, times(1)).getResourceDetails(eq(expectedFullPath));
         }
 
@@ -551,7 +636,7 @@ class FileServiceImplTest {
         @Test
         void getById_Success_ReturnsFileResponse() {
                 // Given
-                when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.of(testFile));
+                when(fileRepository.findById(fileId)).thenReturn(Optional.of(testFile));
 
                 // When
                 FileResponse response = fileService.getById(fileId, userId);
@@ -562,32 +647,34 @@ class FileServiceImplTest {
                 assertThat(response.getFilename()).isEqualTo("test.txt");
                 assertThat(response.getContentType()).isEqualTo("text/plain");
 
-                verify(fileRepository, times(1)).findByIdAndUserId(fileId, userId);
+                verify(fileRepository, times(1)).findById(fileId);
         }
 
         @Test
         void getById_FileNotFound_ThrowsResourceNotFoundException() {
                 // Given
-                when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.empty());
+                when(fileRepository.findById(fileId)).thenReturn(Optional.empty());
 
                 // When/Then
                 assertThatThrownBy(() -> fileService.getById(fileId, userId))
                                 .isInstanceOf(CloudFileNotFoundException.class);
 
-                verify(fileRepository, times(1)).findByIdAndUserId(fileId, userId);
+                verify(fileRepository, times(1)).findById(fileId);
         }
 
         @Test
-        void getById_BelongsToAnotherUser_ThrowsResourceNotFoundException() {
+        void getById_BelongsToAnotherUser_ThrowsAccessDeniedException() {
                 // Given
                 UUID otherUserId = UUID.randomUUID();
-                when(fileRepository.findByIdAndUserId(fileId, otherUserId)).thenReturn(Optional.empty());
+                // File exists but belongs to a different user
+                when(fileRepository.findById(fileId)).thenReturn(Optional.of(testFile));
 
                 // When/Then
                 assertThatThrownBy(() -> fileService.getById(fileId, otherUserId))
-                                .isInstanceOf(CloudFileNotFoundException.class);
+                                .isInstanceOf(AccessDeniedException.class)
+                                .hasMessageContaining("Access denied");
 
-                verify(fileRepository, times(1)).findByIdAndUserId(fileId, otherUserId);
+                verify(fileRepository, times(1)).findById(fileId);
         }
 
         @Test
@@ -1114,7 +1201,7 @@ class FileServiceImplTest {
                 String expectedFullPath = getExpectedCloudinaryPublicId(imageFile.getFolderPath(),
                                 imageFile.getCloudinaryPublicId());
 
-                when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.of(imageFile));
+                when(fileRepository.findById(fileId)).thenReturn(Optional.of(imageFile));
                 when(storageService.getFileUrl(eq(expectedFullPath), eq(true))).thenReturn(originalUrl);
                 when(storageService.getTransformUrl(eq(expectedFullPath), eq(true), eq(800), eq(600),
                                 isNull(), isNull(), isNull())).thenReturn(transformedUrl);
@@ -1128,7 +1215,7 @@ class FileServiceImplTest {
                 assertThat(response.getTransformedUrl()).isEqualTo(transformedUrl);
                 assertThat(response.getOriginalUrl()).isEqualTo(originalUrl);
 
-                verify(fileRepository, times(1)).findByIdAndUserId(fileId, userId);
+                verify(fileRepository, times(1)).findById(fileId);
                 verify(storageService, times(1)).getFileUrl(eq(expectedFullPath), eq(true));
                 verify(storageService, times(1)).getTransformUrl(eq(expectedFullPath), eq(true), eq(800),
                                 eq(600), isNull(), isNull(), isNull());
@@ -1137,14 +1224,14 @@ class FileServiceImplTest {
         @Test
         void getTransformUrl_FileNotFound_ThrowsResourceNotFoundException() {
                 // Given
-                when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.empty());
+                when(fileRepository.findById(fileId)).thenReturn(Optional.empty());
 
                 // When/Then
                 assertThatThrownBy(() -> fileService.getTransformUrl(fileId, 800, 600, Optional.empty(),
                                 Optional.empty(), Optional.empty(), userId))
                                 .isInstanceOf(CloudFileNotFoundException.class);
 
-                verify(fileRepository, times(1)).findByIdAndUserId(fileId, userId);
+                verify(fileRepository, times(1)).findById(fileId);
                 verify(storageService, never()).getFileUrl(any(), anyBoolean());
         }
 
@@ -1156,7 +1243,7 @@ class FileServiceImplTest {
                 String expectedFullPath = getExpectedCloudinaryPublicId(imageFile.getFolderPath(),
                                 imageFile.getCloudinaryPublicId());
 
-                when(fileRepository.findByIdAndUserId(fileId, userId)).thenReturn(Optional.of(imageFile));
+                when(fileRepository.findById(fileId)).thenReturn(Optional.of(imageFile));
                 when(storageService.getFileUrl(eq(expectedFullPath), eq(true)))
                                 .thenThrow(new StorageException("Storage error"));
 
@@ -1166,7 +1253,7 @@ class FileServiceImplTest {
                                 .isInstanceOf(StorageException.class)
                                 .hasMessageContaining("Storage error");
 
-                verify(fileRepository, times(1)).findByIdAndUserId(fileId, userId);
+                verify(fileRepository, times(1)).findById(fileId);
                 verify(storageService, times(1)).getFileUrl(eq(expectedFullPath), eq(true));
         }
 

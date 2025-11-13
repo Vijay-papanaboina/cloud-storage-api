@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import github.vijay_papanaboina.cloud_storage_api.dto.*;
 import github.vijay_papanaboina.cloud_storage_api.exception.BadRequestException;
 import github.vijay_papanaboina.cloud_storage_api.exception.ResourceNotFoundException;
+import github.vijay_papanaboina.cloud_storage_api.repository.FileRepository;
 import github.vijay_papanaboina.cloud_storage_api.security.JwtTokenProvider;
 import github.vijay_papanaboina.cloud_storage_api.security.SecurityUtils;
 import github.vijay_papanaboina.cloud_storage_api.service.FileService;
@@ -49,6 +50,9 @@ class FileControllerTest {
 
     @MockBean
     private FileService fileService;
+
+    @MockBean
+    private FileRepository fileRepository;
 
     @MockBean
     private JwtTokenProvider jwtTokenProvider;

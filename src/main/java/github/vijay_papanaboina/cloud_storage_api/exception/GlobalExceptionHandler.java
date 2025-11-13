@@ -83,6 +83,20 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
     }
 
+    @ExceptionHandler(AuthorizationException.class)
+    public ResponseEntity<ErrorResponse> handleAuthorizationException(
+            AuthorizationException ex, HttpServletRequest request) {
+        log.warn("Authorization failed: {}", ex.getMessage());
+        ErrorResponse error = new ErrorResponse();
+        error.setTimestamp(Instant.now());
+        error.setStatus(HttpStatus.FORBIDDEN.value());
+        error.setError("Forbidden");
+        error.setMessage(ex.getMessage());
+        error.setPath(request.getRequestURI());
+        error.setErrorCode(ex.getErrorCode() != null ? ex.getErrorCode() : "AUTHORIZATION_FAILED");
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
+    }
+
     @ExceptionHandler(BadRequestException.class)
     public ResponseEntity<ErrorResponse> handleBadRequest(
             BadRequestException ex, HttpServletRequest request) {

@@ -65,6 +65,81 @@ public interface FileRepository extends JpaRepository<File, UUID> {
         Optional<File> findByIdAndUserId(@Param("id") UUID id, @Param("userId") UUID userId);
 
         /**
+         * Find file by user ID, folder path, and filename (for download by filepath).
+         * Returns only non-deleted files belonging to the user.
+         * 
+         * @param userId     The user ID
+         * @param folderPath The folder path (null or empty for root)
+         * @param filename   The filename
+         * @return Optional File if found
+         */
+        @Query("SELECT f FROM File f WHERE f.user.id = :userId " +
+                        "AND f.deleted = false " +
+                        "AND (((:folderPath IS NULL OR :folderPath = '') AND (f.folderPath IS NULL OR f.folderPath = '')) OR f.folderPath = :folderPath) "
+                        +
+                        "AND f.filename = :filename")
+        Optional<File> findByUserIdAndFolderPathAndFilenameAndDeletedFalse(
+                        @Param("userId") UUID userId,
+                        @Param("folderPath") String folderPath,
+                        @Param("filename") String filename);
+
+        /**
+         * Find file by user ID, folder path, and filename, excluding a specific file
+         * ID.
+         * Used during updates to check for filename conflicts while excluding the
+         * current file.
+         * Returns only non-deleted files belonging to the user.
+         * 
+         * @param userId        The user ID
+         * @param folderPath    The folder path (null or empty for root)
+         * @param filename      The filename
+         * @param excludeFileId The file ID to exclude from the search (typically the
+         *                      current file being updated)
+         * @return Optional File if found
+         */
+        @Query("SELECT f FROM File f WHERE f.user.id = :userId " +
+                        "AND f.deleted = false " +
+                        "AND (((:folderPath IS NULL OR :folderPath = '') AND (f.folderPath IS NULL OR f.folderPath = '')) OR f.folderPath = :folderPath) "
+                        +
+                        "AND f.filename = :filename " +
+                        "AND f.id != :excludeFileId")
+        Optional<File> findByUserIdAndFolderPathAndFilenameAndDeletedFalseExcludingFileId(
+                        @Param("userId") UUID userId,
+                        @Param("folderPath") String folderPath,
+                        @Param("filename") String filename,
+                        @Param("excludeFileId") UUID excludeFileId);
+
+        /**
+         * Find files by user ID, folder path, and filename starting with pattern (for
+         * auto-renaming).
+         * Returns only non-deleted files belonging to the user.
+         * Used to check if files with similar names exist (e.g., "image.jpg",
+         * "image-1.jpg", "image-2.jpg").
+         * 
+         * <p>
+         * <strong>Important:</strong> The filenamePrefix parameter should have SQL LIKE
+         * wildcards (% and _) escaped before being passed to this method. Use
+         * {@link FileServiceImpl#escapeLikeWildcards(String)} to escape user-supplied
+         * input to prevent wildcard injection.
+         * 
+         * @param userId         The user ID
+         * @param folderPath     The folder path (null or empty for root)
+         * @param filenamePrefix The filename prefix to match (e.g., "image" or
+         *                       "image-"). Must have wildcards escaped if from user
+         *                       input.
+         * @return List of files matching the pattern
+         */
+        @Query("SELECT f FROM File f WHERE f.user.id = :userId " +
+                        "AND f.deleted = false " +
+                        "AND (((:folderPath IS NULL OR :folderPath = '') AND (f.folderPath IS NULL OR f.folderPath = '')) OR f.folderPath = :folderPath) "
+                        +
+                        "AND f.filename LIKE CONCAT(:filenamePrefix, '%') ESCAPE '\\'")
+        List<File> findByUserIdAndFolderPathAndFilenameStartingWithAndDeletedFalse(
+                        @Param("userId") UUID userId,
+                        @Param("folderPath") String folderPath,
+                        @Param("filenamePrefix") String filenamePrefix);
+
+        /**
          * Search files by filename (GET /api/files/search?q=...).
          * Returns only non-deleted files belonging to the user.
          */

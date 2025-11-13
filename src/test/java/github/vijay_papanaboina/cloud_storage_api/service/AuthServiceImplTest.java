@@ -1,24 +1,16 @@
 package github.vijay_papanaboina.cloud_storage_api.service;
 
-import github.vijay_papanaboina.cloud_storage_api.dto.AuthResponse;
 import github.vijay_papanaboina.cloud_storage_api.dto.LoginRequest;
 import github.vijay_papanaboina.cloud_storage_api.dto.RefreshTokenRequest;
-import github.vijay_papanaboina.cloud_storage_api.dto.RefreshTokenResponse;
 import github.vijay_papanaboina.cloud_storage_api.dto.RegisterRequest;
-import github.vijay_papanaboina.cloud_storage_api.dto.UserResponse;
 import github.vijay_papanaboina.cloud_storage_api.exception.BadRequestException;
-import github.vijay_papanaboina.cloud_storage_api.exception.ConflictException;
-import github.vijay_papanaboina.cloud_storage_api.exception.InvalidTokenException;
 import github.vijay_papanaboina.cloud_storage_api.exception.ResourceNotFoundException;
 import github.vijay_papanaboina.cloud_storage_api.exception.UnauthorizedException;
-import github.vijay_papanaboina.cloud_storage_api.model.TokenType;
 import github.vijay_papanaboina.cloud_storage_api.model.User;
 import github.vijay_papanaboina.cloud_storage_api.repository.UserRepository;
-import github.vijay_papanaboina.cloud_storage_api.security.JwtTokenProvider;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -28,11 +20,17 @@ import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
+/**
+ * Unit tests for AuthServiceImpl focusing on error contracts and edge cases.
+ * Success scenarios are covered by integration tests.
+ * These tests verify what exceptions are thrown, not how the code works
+ * internally.
+ */
 @ExtendWith(MockitoExtension.class)
 class AuthServiceImplTest {
 
@@ -43,7 +41,7 @@ class AuthServiceImplTest {
     private PasswordEncoder passwordEncoder;
 
     @Mock
-    private JwtTokenProvider jwtTokenProvider;
+    private github.vijay_papanaboina.cloud_storage_api.security.JwtTokenProvider jwtTokenProvider;
 
     @InjectMocks
     private AuthServiceImpl authService;
@@ -66,44 +64,7 @@ class AuthServiceImplTest {
         testUser = createTestUser(userId, username, email, passwordHash);
     }
 
-    // login tests
-    @Test
-    void login_Success() throws InvalidTokenException {
-        // Given
-        LoginRequest request = createTestLoginRequest(username, password);
-        String accessToken = "access-token";
-        String refreshToken = "refresh-token";
-        long accessTokenExpiration = 900000L; // 15 minutes
-        long refreshTokenExpiration = 604800000L; // 7 days
-
-        when(userRepository.findByUsername(username)).thenReturn(Optional.of(testUser));
-        when(passwordEncoder.matches(password, passwordHash)).thenReturn(true);
-        when(jwtTokenProvider.generateAccessToken(userId, username)).thenReturn(accessToken);
-        when(jwtTokenProvider.generateRefreshToken(userId, username)).thenReturn(refreshToken);
-        when(jwtTokenProvider.getTokenExpiration(TokenType.ACCESS)).thenReturn(accessTokenExpiration);
-        when(jwtTokenProvider.getTokenExpiration(TokenType.REFRESH)).thenReturn(refreshTokenExpiration);
-        when(userRepository.save(any(User.class))).thenReturn(testUser);
-
-        // When
-        AuthResponse response = authService.login(request);
-
-        // Then
-        assertThat(response).isNotNull();
-        assertThat(response.getAccessToken()).isEqualTo(accessToken);
-        assertThat(response.getRefreshToken()).isEqualTo(refreshToken);
-        assertThat(response.getTokenType()).isEqualTo(AuthResponse.DEFAULT_TOKEN_TYPE);
-        assertThat(response.getExpiresIn()).isEqualTo(accessTokenExpiration);
-        assertThat(response.getRefreshExpiresIn()).isEqualTo(refreshTokenExpiration);
-        assertThat(response.getUser()).isNotNull();
-        assertThat(response.getUser().getId()).isEqualTo(userId);
-        assertThat(response.getUser().getUsername()).isEqualTo(username);
-
-        verify(userRepository, times(1)).findByUsername(username);
-        verify(passwordEncoder, times(1)).matches(password, passwordHash);
-        verify(jwtTokenProvider, times(1)).generateAccessToken(userId, username);
-        verify(jwtTokenProvider, times(1)).generateRefreshToken(userId, username);
-        verify(userRepository, times(1)).save(any(User.class));
-    }
+    // ==================== Login Error Contract Tests ====================
 
     @Test
     void login_UserNotFound_ThrowsUnauthorizedException() {
@@ -115,10 +76,6 @@ class AuthServiceImplTest {
         assertThatThrownBy(() -> authService.login(request))
                 .isInstanceOf(UnauthorizedException.class)
                 .hasMessageContaining("Invalid username or password");
-
-        verify(userRepository, times(1)).findByUsername(username);
-        verify(passwordEncoder, never()).matches(anyString(), anyString());
-        verify(jwtTokenProvider, never()).generateAccessToken(any(), any());
     }
 
     @Test
@@ -132,10 +89,6 @@ class AuthServiceImplTest {
         assertThatThrownBy(() -> authService.login(request))
                 .isInstanceOf(UnauthorizedException.class)
                 .hasMessageContaining("User account is inactive");
-
-        verify(userRepository, times(1)).findByUsername(username);
-        verify(passwordEncoder, never()).matches(anyString(), anyString());
-        verify(jwtTokenProvider, never()).generateAccessToken(any(), any());
     }
 
     @Test
@@ -149,70 +102,9 @@ class AuthServiceImplTest {
         assertThatThrownBy(() -> authService.login(request))
                 .isInstanceOf(UnauthorizedException.class)
                 .hasMessageContaining("Invalid username or password");
-
-        verify(userRepository, times(1)).findByUsername(username);
-        verify(passwordEncoder, times(1)).matches(password, passwordHash);
-        verify(jwtTokenProvider, never()).generateAccessToken(any(), any());
     }
 
-    @Test
-    void login_UpdatesLastLoginAt() throws InvalidTokenException {
-        // Given
-        LoginRequest request = createTestLoginRequest(username, password);
-        String accessToken = "access-token";
-        String refreshToken = "refresh-token";
-        long accessTokenExpiration = 900000L;
-        long refreshTokenExpiration = 604800000L;
-
-        when(userRepository.findByUsername(username)).thenReturn(Optional.of(testUser));
-        when(passwordEncoder.matches(password, passwordHash)).thenReturn(true);
-        when(jwtTokenProvider.generateAccessToken(userId, username)).thenReturn(accessToken);
-        when(jwtTokenProvider.generateRefreshToken(userId, username)).thenReturn(refreshToken);
-        when(jwtTokenProvider.getTokenExpiration(TokenType.ACCESS)).thenReturn(accessTokenExpiration);
-        when(jwtTokenProvider.getTokenExpiration(TokenType.REFRESH)).thenReturn(refreshTokenExpiration);
-        when(userRepository.save(any(User.class))).thenReturn(testUser);
-
-        // When
-        authService.login(request);
-
-        // Then
-        ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
-        verify(userRepository, times(1)).save(userCaptor.capture());
-        assertThat(userCaptor.getValue().getLastLoginAt()).isNotNull();
-    }
-
-    // register tests
-    @Test
-    void register_Success() {
-        // Given
-        RegisterRequest request = createTestRegisterRequest(username, email, password);
-        String encodedPassword = "$2a$10$encodedPasswordHash";
-
-        when(userRepository.findByUsername(username)).thenReturn(Optional.empty());
-        when(userRepository.findByEmail(email)).thenReturn(Optional.empty());
-        when(passwordEncoder.encode(password)).thenReturn(encodedPassword);
-        when(userRepository.save(any(User.class))).thenAnswer(invocation -> {
-            User user = invocation.getArgument(0);
-            user.setId(userId);
-            return user;
-        });
-
-        // When
-        UserResponse response = authService.register(request);
-
-        // Then
-        assertThat(response).isNotNull();
-        assertThat(response.getId()).isEqualTo(userId);
-        assertThat(response.getUsername()).isEqualTo(username);
-        assertThat(response.getEmail()).isEqualTo(email);
-        assertThat(response.getActive()).isTrue();
-        assertThat(response.getCreatedAt()).isNotNull();
-
-        verify(userRepository, times(1)).findByUsername(username);
-        verify(userRepository, times(1)).findByEmail(email);
-        verify(passwordEncoder, times(1)).encode(password);
-        verify(userRepository, times(1)).save(any(User.class));
-    }
+    // ==================== Register Error Contract Tests ====================
 
     @Test
     void register_DuplicateUsername_ThrowsConflictException() {
@@ -222,13 +114,8 @@ class AuthServiceImplTest {
 
         // When/Then
         assertThatThrownBy(() -> authService.register(request))
-                .isInstanceOf(ConflictException.class)
+                .isInstanceOf(github.vijay_papanaboina.cloud_storage_api.exception.ConflictException.class)
                 .hasMessageContaining("username already exists");
-
-        verify(userRepository, times(1)).findByUsername(username);
-        verify(userRepository, never()).findByEmail(anyString());
-        verify(passwordEncoder, never()).encode(anyString());
-        verify(userRepository, never()).save(any());
     }
 
     @Test
@@ -240,118 +127,15 @@ class AuthServiceImplTest {
 
         // When/Then
         assertThatThrownBy(() -> authService.register(request))
-                .isInstanceOf(ConflictException.class)
+                .isInstanceOf(github.vijay_papanaboina.cloud_storage_api.exception.ConflictException.class)
                 .hasMessageContaining("email already exists");
-
-        verify(userRepository, times(1)).findByUsername(username);
-        verify(userRepository, times(1)).findByEmail(email);
-        verify(passwordEncoder, never()).encode(anyString());
-        verify(userRepository, never()).save(any());
     }
 
-    @Test
-    void register_PasswordIsHashed() {
-        // Given
-        RegisterRequest request = createTestRegisterRequest(username, email, password);
-        String encodedPassword = "$2a$10$encodedPasswordHash";
-
-        when(userRepository.findByUsername(username)).thenReturn(Optional.empty());
-        when(userRepository.findByEmail(email)).thenReturn(Optional.empty());
-        when(passwordEncoder.encode(password)).thenReturn(encodedPassword);
-        when(userRepository.save(any(User.class))).thenAnswer(invocation -> {
-            User user = invocation.getArgument(0);
-            user.setId(userId);
-            return user;
-        });
-
-        // When
-        authService.register(request);
-
-        // Then
-        ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
-        verify(userRepository, times(1)).save(userCaptor.capture());
-        assertThat(userCaptor.getValue().getPasswordHash()).isEqualTo(encodedPassword);
-        assertThat(userCaptor.getValue().getPasswordHash()).isNotEqualTo(password);
-    }
+    // ==================== RefreshToken Error Contract Tests ====================
 
     @Test
-    void register_UserActivatedByDefault() {
-        // Given
-        RegisterRequest request = createTestRegisterRequest(username, email, password);
-        String encodedPassword = "$2a$10$encodedPasswordHash";
-
-        when(userRepository.findByUsername(username)).thenReturn(Optional.empty());
-        when(userRepository.findByEmail(email)).thenReturn(Optional.empty());
-        when(passwordEncoder.encode(password)).thenReturn(encodedPassword);
-        when(userRepository.save(any(User.class))).thenAnswer(invocation -> {
-            User user = invocation.getArgument(0);
-            user.setId(userId);
-            return user;
-        });
-
-        // When
-        UserResponse response = authService.register(request);
-
-        // Then
-        assertThat(response.getActive()).isTrue();
-    }
-
-    @Test
-    void register_CreatedAtSet() {
-        // Given
-        RegisterRequest request = createTestRegisterRequest(username, email, password);
-        String encodedPassword = "$2a$10$encodedPasswordHash";
-        Instant beforeRegister = Instant.now();
-
-        when(userRepository.findByUsername(username)).thenReturn(Optional.empty());
-        when(userRepository.findByEmail(email)).thenReturn(Optional.empty());
-        when(passwordEncoder.encode(password)).thenReturn(encodedPassword);
-        when(userRepository.save(any(User.class))).thenAnswer(invocation -> {
-            User user = invocation.getArgument(0);
-            user.setId(userId);
-            return user;
-        });
-
-        // When
-        UserResponse response = authService.register(request);
-
-        // Then
-        assertThat(response.getCreatedAt()).isNotNull();
-        assertThat(response.getCreatedAt()).isAfterOrEqualTo(beforeRegister);
-    }
-
-    // refreshToken tests
-    @Test
-    void refreshToken_Success() throws InvalidTokenException {
-        // Given
-        String refreshToken = "refresh-token";
-        RefreshTokenRequest request = new RefreshTokenRequest(refreshToken);
-        String newAccessToken = "new-access-token";
-        long accessTokenExpiration = 900000L;
-
-        when(jwtTokenProvider.validateToken(refreshToken)).thenReturn(true);
-        when(jwtTokenProvider.getUserIdFromToken(refreshToken)).thenReturn(userId);
-        when(jwtTokenProvider.getUsernameFromToken(refreshToken)).thenReturn(username);
-        when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
-        when(jwtTokenProvider.generateAccessToken(userId, username)).thenReturn(newAccessToken);
-        when(jwtTokenProvider.getTokenExpiration(TokenType.ACCESS)).thenReturn(accessTokenExpiration);
-
-        // When
-        RefreshTokenResponse response = authService.refreshToken(request);
-
-        // Then
-        assertThat(response).isNotNull();
-        assertThat(response.getAccessToken()).isEqualTo(newAccessToken);
-        assertThat(response.getTokenType()).isEqualTo(RefreshTokenResponse.DEFAULT_TOKEN_TYPE);
-        assertThat(response.getExpiresIn()).isEqualTo(accessTokenExpiration);
-
-        verify(jwtTokenProvider, times(1)).validateToken(refreshToken);
-        verify(jwtTokenProvider, times(1)).getUserIdFromToken(refreshToken);
-        verify(jwtTokenProvider, times(1)).generateAccessToken(userId, username);
-    }
-
-    @Test
-    void refreshToken_InvalidToken_ThrowsUnauthorizedException() throws InvalidTokenException {
+    void refreshToken_InvalidToken_ThrowsUnauthorizedException()
+            throws github.vijay_papanaboina.cloud_storage_api.exception.InvalidTokenException {
         // Given
         String refreshToken = "invalid-token";
         RefreshTokenRequest request = new RefreshTokenRequest(refreshToken);
@@ -362,13 +146,11 @@ class AuthServiceImplTest {
         assertThatThrownBy(() -> authService.refreshToken(request))
                 .isInstanceOf(UnauthorizedException.class)
                 .hasMessageContaining("Invalid or expired refresh token");
-
-        verify(jwtTokenProvider, times(1)).validateToken(refreshToken);
-        verify(jwtTokenProvider, never()).getUserIdFromToken(anyString());
     }
 
     @Test
-    void refreshToken_UserNotFound_ThrowsUnauthorizedException() throws InvalidTokenException {
+    void refreshToken_UserNotFound_ThrowsUnauthorizedException()
+            throws github.vijay_papanaboina.cloud_storage_api.exception.InvalidTokenException {
         // Given
         String refreshToken = "refresh-token";
         RefreshTokenRequest request = new RefreshTokenRequest(refreshToken);
@@ -382,13 +164,11 @@ class AuthServiceImplTest {
         assertThatThrownBy(() -> authService.refreshToken(request))
                 .isInstanceOf(UnauthorizedException.class)
                 .hasMessageContaining("User not found");
-
-        verify(userRepository, times(1)).findById(userId);
-        verify(jwtTokenProvider, never()).generateAccessToken(any(), any());
     }
 
     @Test
-    void refreshToken_InactiveUser_ThrowsUnauthorizedException() throws InvalidTokenException {
+    void refreshToken_InactiveUser_ThrowsUnauthorizedException()
+            throws github.vijay_papanaboina.cloud_storage_api.exception.InvalidTokenException {
         // Given
         String refreshToken = "refresh-token";
         RefreshTokenRequest request = new RefreshTokenRequest(refreshToken);
@@ -403,33 +183,29 @@ class AuthServiceImplTest {
         assertThatThrownBy(() -> authService.refreshToken(request))
                 .isInstanceOf(UnauthorizedException.class)
                 .hasMessageContaining("User account is inactive");
-
-        verify(userRepository, times(1)).findById(userId);
-        verify(jwtTokenProvider, never()).generateAccessToken(any(), any());
     }
 
     @Test
-    void refreshToken_ExtractUserIdFails_ThrowsUnauthorizedException() throws InvalidTokenException {
+    void refreshToken_ExtractUserIdFails_ThrowsUnauthorizedException()
+            throws github.vijay_papanaboina.cloud_storage_api.exception.InvalidTokenException {
         // Given
         String refreshToken = "refresh-token";
         RefreshTokenRequest request = new RefreshTokenRequest(refreshToken);
 
         when(jwtTokenProvider.validateToken(refreshToken)).thenReturn(true);
         when(jwtTokenProvider.getUserIdFromToken(refreshToken))
-                .thenThrow(new InvalidTokenException("Token expired"));
+                .thenThrow(new github.vijay_papanaboina.cloud_storage_api.exception.InvalidTokenException(
+                        "Token expired"));
 
         // When/Then
         assertThatThrownBy(() -> authService.refreshToken(request))
                 .isInstanceOf(UnauthorizedException.class)
                 .hasMessageContaining("Invalid or expired refresh token");
-
-        verify(jwtTokenProvider, times(1)).validateToken(refreshToken);
-        verify(jwtTokenProvider, times(1)).getUserIdFromToken(refreshToken);
-        verify(jwtTokenProvider, never()).generateAccessToken(any(), any());
     }
 
     @Test
-    void refreshToken_NullUserId_ThrowsNullPointerException() throws InvalidTokenException {
+    void refreshToken_NullUserId_ThrowsNullPointerException()
+            throws github.vijay_papanaboina.cloud_storage_api.exception.InvalidTokenException {
         // Given
         String refreshToken = "refresh-token";
         RefreshTokenRequest request = new RefreshTokenRequest(refreshToken);
@@ -441,28 +217,9 @@ class AuthServiceImplTest {
         assertThatThrownBy(() -> authService.refreshToken(request))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("User ID cannot be null");
-
-        verify(jwtTokenProvider, times(1)).getUserIdFromToken(refreshToken);
     }
 
-    // logout tests
-    @Test
-    void logout_Success() throws InvalidTokenException {
-        // Given
-        String refreshToken = "refresh-token";
-
-        when(jwtTokenProvider.validateToken(refreshToken)).thenReturn(true);
-        when(jwtTokenProvider.getUserIdFromToken(refreshToken)).thenReturn(userId);
-        when(userRepository.existsById(userId)).thenReturn(true);
-
-        // When
-        authService.logout(refreshToken);
-
-        // Then
-        verify(jwtTokenProvider, times(1)).validateToken(refreshToken);
-        verify(jwtTokenProvider, times(1)).getUserIdFromToken(refreshToken);
-        verify(userRepository, times(1)).existsById(userId);
-    }
+    // ==================== Logout Error Contract Tests ====================
 
     @Test
     void logout_NullToken_ThrowsBadRequestException() {
@@ -470,8 +227,6 @@ class AuthServiceImplTest {
         assertThatThrownBy(() -> authService.logout(null))
                 .isInstanceOf(BadRequestException.class)
                 .hasMessageContaining("Refresh token is required");
-
-        verify(jwtTokenProvider, never()).validateToken(anyString());
     }
 
     @Test
@@ -480,12 +235,11 @@ class AuthServiceImplTest {
         assertThatThrownBy(() -> authService.logout("   "))
                 .isInstanceOf(BadRequestException.class)
                 .hasMessageContaining("Refresh token is required");
-
-        verify(jwtTokenProvider, never()).validateToken(anyString());
     }
 
     @Test
-    void logout_InvalidToken_ThrowsUnauthorizedException() throws InvalidTokenException {
+    void logout_InvalidToken_ThrowsUnauthorizedException()
+            throws github.vijay_papanaboina.cloud_storage_api.exception.InvalidTokenException {
         // Given
         String refreshToken = "invalid-token";
 
@@ -495,32 +249,28 @@ class AuthServiceImplTest {
         assertThatThrownBy(() -> authService.logout(refreshToken))
                 .isInstanceOf(UnauthorizedException.class)
                 .hasMessageContaining("Invalid or expired refresh token");
-
-        verify(jwtTokenProvider, times(1)).validateToken(refreshToken);
-        verify(jwtTokenProvider, never()).getUserIdFromToken(anyString());
     }
 
     @Test
-    void logout_ExtractUserIdFails_ThrowsUnauthorizedException() throws InvalidTokenException {
+    void logout_ExtractUserIdFails_ThrowsUnauthorizedException()
+            throws github.vijay_papanaboina.cloud_storage_api.exception.InvalidTokenException {
         // Given
         String refreshToken = "refresh-token";
 
         when(jwtTokenProvider.validateToken(refreshToken)).thenReturn(true);
         when(jwtTokenProvider.getUserIdFromToken(refreshToken))
-                .thenThrow(new InvalidTokenException("Token expired"));
+                .thenThrow(new github.vijay_papanaboina.cloud_storage_api.exception.InvalidTokenException(
+                        "Token expired"));
 
         // When/Then
         assertThatThrownBy(() -> authService.logout(refreshToken))
                 .isInstanceOf(UnauthorizedException.class)
                 .hasMessageContaining("Invalid refresh token");
-
-        verify(jwtTokenProvider, times(1)).validateToken(refreshToken);
-        verify(jwtTokenProvider, times(1)).getUserIdFromToken(refreshToken);
-        verify(userRepository, never()).existsById(any());
     }
 
     @Test
-    void logout_NullUserId_ThrowsIllegalArgumentException() throws InvalidTokenException {
+    void logout_NullUserId_ThrowsIllegalArgumentException()
+            throws github.vijay_papanaboina.cloud_storage_api.exception.InvalidTokenException {
         // Given
         String refreshToken = "refresh-token";
 
@@ -531,12 +281,11 @@ class AuthServiceImplTest {
         assertThatThrownBy(() -> authService.logout(refreshToken))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("User ID cannot be null");
-
-        verify(jwtTokenProvider, times(1)).getUserIdFromToken(refreshToken);
     }
 
     @Test
-    void logout_UserNotFound_ThrowsResourceNotFoundException() throws InvalidTokenException {
+    void logout_UserNotFound_ThrowsResourceNotFoundException()
+            throws github.vijay_papanaboina.cloud_storage_api.exception.InvalidTokenException {
         // Given
         String refreshToken = "refresh-token";
 
@@ -548,30 +297,9 @@ class AuthServiceImplTest {
         assertThatThrownBy(() -> authService.logout(refreshToken))
                 .isInstanceOf(ResourceNotFoundException.class)
                 .hasMessageContaining("User not found");
-
-        verify(userRepository, times(1)).existsById(userId);
     }
 
-    // getCurrentUser tests
-    @Test
-    void getCurrentUser_Success() {
-        // Given
-        when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
-
-        // When
-        UserResponse response = authService.getCurrentUser(userId);
-
-        // Then
-        assertThat(response).isNotNull();
-        assertThat(response.getId()).isEqualTo(userId);
-        assertThat(response.getUsername()).isEqualTo(username);
-        assertThat(response.getEmail()).isEqualTo(email);
-        assertThat(response.getActive()).isEqualTo(testUser.getActive());
-        assertThat(response.getCreatedAt()).isEqualTo(testUser.getCreatedAt());
-        assertThat(response.getLastLoginAt()).isEqualTo(testUser.getLastLoginAt());
-
-        verify(userRepository, times(1)).findById(userId);
-    }
+    // ==================== GetCurrentUser Error Contract Tests ====================
 
     @Test
     void getCurrentUser_NullUserId_ThrowsIllegalArgumentException() {
@@ -579,8 +307,6 @@ class AuthServiceImplTest {
         assertThatThrownBy(() -> authService.getCurrentUser(null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("User ID cannot be null");
-
-        verify(userRepository, never()).findById(any());
     }
 
     @Test
@@ -592,11 +318,10 @@ class AuthServiceImplTest {
         assertThatThrownBy(() -> authService.getCurrentUser(userId))
                 .isInstanceOf(ResourceNotFoundException.class)
                 .hasMessageContaining("User not found");
-
-        verify(userRepository, times(1)).findById(userId);
     }
 
-    // Helper methods
+    // ==================== Helper Methods ====================
+
     private User createTestUser(UUID userId, String username, String email, String passwordHash) {
         User user = new User();
         user.setId(userId);

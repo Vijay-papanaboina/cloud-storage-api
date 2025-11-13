@@ -172,7 +172,7 @@ public class FolderServiceImpl implements FolderService {
 
         // Check if folder exists (by checking if any files have this folder path)
         long fileCount = fileRepository.countByUserIdAndFolderPathAndDeletedFalse(userId, normalizedPath);
-        
+
         // Check if folder is non-empty
         if (fileCount > 0) {
             log.warn("Cannot delete non-empty folder: path={}, userId={}, fileCount={}",
@@ -181,7 +181,8 @@ public class FolderServiceImpl implements FolderService {
         }
 
         // Folder is virtual, so deletion means ensuring no files have this path
-        // If fileCount == 0, the folder is already effectively deleted (no files with this path)
+        // If fileCount == 0, the folder is already effectively deleted (no files with
+        // this path)
         log.info("Folder deleted successfully: path={}, userId={}", normalizedPath, userId);
     }
 
@@ -203,7 +204,8 @@ public class FolderServiceImpl implements FolderService {
         String normalizedPath = normalizeFolderPath(path);
         validateFolderPath(normalizedPath);
 
-        // Note: Empty folders (fileCount == 0) are allowed - they may have been created via createFolder
+        // Note: Empty folders (fileCount == 0) are allowed - they may have been created
+        // via createFolder
         // and will return statistics with 0 files, 0 size, etc.
 
         // Get folder statistics from repository
@@ -274,7 +276,8 @@ public class FolderServiceImpl implements FolderService {
     /**
      * Normalize folder path (remove trailing slash, ensure starts with /)
      */
-    private String normalizeFolderPath(String path) {
+    // Package-private for testing
+    String normalizeFolderPath(String path) {
         if (path == null || path.isEmpty()) {
             return null;
         }
@@ -299,7 +302,8 @@ public class FolderServiceImpl implements FolderService {
      * @param folderPath Folder path to validate
      * @throws BadRequestException if folder path is invalid
      */
-    private void validateFolderPath(String folderPath) {
+    // Package-private for testing
+    void validateFolderPath(String folderPath) {
         if (folderPath == null || folderPath.isEmpty()) {
             throw new BadRequestException("Folder path is required");
         }
@@ -338,7 +342,8 @@ public class FolderServiceImpl implements FolderService {
     /**
      * Format file size in human-readable format
      */
-    private String formatFileSize(long bytes) {
+    // Package-private for testing
+    String formatFileSize(long bytes) {
         if (bytes < 1024) {
             return bytes + " B";
         } else if (bytes < 1024 * 1024) {

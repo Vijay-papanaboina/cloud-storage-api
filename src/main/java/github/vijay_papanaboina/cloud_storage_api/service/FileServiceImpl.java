@@ -1202,7 +1202,8 @@ public class FileServiceImpl implements FileService {
      * @return Empty Optional if value is empty or blank, otherwise the original
      *         Optional
      */
-    private Optional<String> normalizeOptionalString(Optional<String> value) {
+    // Package-private for testing
+    Optional<String> normalizeOptionalString(Optional<String> value) {
         return value.filter(s -> s != null && !s.isBlank());
     }
 
@@ -1226,7 +1227,8 @@ public class FileServiceImpl implements FileService {
      *                       folder)
      * @return Cloudinary folder path with userId prefix
      */
-    private String constructCloudinaryFolderPath(UUID userId, String userFolderPath) {
+    // Package-private for testing
+    String constructCloudinaryFolderPath(UUID userId, String userFolderPath) {
         if (userId == null) {
             throw new IllegalArgumentException("User ID cannot be null");
         }
@@ -1261,7 +1263,8 @@ public class FileServiceImpl implements FileService {
      * @param uuid           The base public ID (UUID)
      * @return Full public ID with userId prefix and folder path
      */
-    private String constructCloudinaryPublicId(UUID userId, String userFolderPath, String uuid) {
+    // Package-private for testing
+    String constructCloudinaryPublicId(UUID userId, String userFolderPath, String uuid) {
         if (userId == null) {
             throw new IllegalArgumentException("User ID cannot be null");
         }
@@ -1299,7 +1302,8 @@ public class FileServiceImpl implements FileService {
      * @return The UUID part (last segment after the last slash), or the original if
      *         no slash found
      */
-    private String extractUuidFromPublicId(String fullPublicId) {
+    // Package-private for testing
+    String extractUuidFromPublicId(String fullPublicId) {
         if (fullPublicId == null || fullPublicId.isEmpty()) {
             return fullPublicId;
         }
@@ -1336,7 +1340,8 @@ public class FileServiceImpl implements FileService {
      * @return Sanitized filename
      * @throws BadRequestException if filename is invalid
      */
-    private String sanitizeFilename(String filename) {
+    // Package-private for testing
+    String sanitizeFilename(String filename) {
         if (filename == null || filename.trim().isEmpty()) {
             throw new BadRequestException("Filename cannot be null or empty");
         }
@@ -1392,7 +1397,8 @@ public class FileServiceImpl implements FileService {
     /**
      * Extract file extension from filename
      */
-    private String getFileExtension(String filename) {
+    // Package-private for testing
+    String getFileExtension(String filename) {
         if (filename == null || filename.isEmpty()) {
             return null;
         }
@@ -1411,7 +1417,8 @@ public class FileServiceImpl implements FileService {
      * @param input The input string that may contain wildcards
      * @return The escaped string safe for use in LIKE queries with ESCAPE clause
      */
-    private String escapeLikeWildcards(String input) {
+    // Package-private for testing
+    String escapeLikeWildcards(String input) {
         if (input == null) {
             return null;
         }
@@ -1424,7 +1431,8 @@ public class FileServiceImpl implements FileService {
     /**
      * Format file size in human-readable format
      */
-    private String formatFileSize(long bytes) {
+    // Package-private for testing
+    String formatFileSize(long bytes) {
         if (bytes < 1024) {
             return bytes + " B";
         } else if (bytes < 1024 * 1024) {
@@ -1442,7 +1450,8 @@ public class FileServiceImpl implements FileService {
      * @param folderPath Folder path to validate
      * @throws BadRequestException if folder path is invalid
      */
-    private void validateFolderPath(String folderPath) {
+    // Package-private for testing
+    void validateFolderPath(String folderPath) {
         if (folderPath != null && !folderPath.isEmpty()) {
             // Use SafeFolderPathValidator to prevent path traversal attacks
             SafeFolderPathValidator.validatePath(folderPath);
@@ -1461,7 +1470,8 @@ public class FileServiceImpl implements FileService {
      * @param operation   Operation name for error message
      * @throws BadRequestException if file type does not support transformations
      */
-    private void validateFileTypeForTransformation(String contentType, String operation) {
+    // Package-private for testing
+    void validateFileTypeForTransformation(String contentType, String operation) {
         if (contentType == null || (!contentType.startsWith("image/") && !contentType.startsWith("video/"))) {
             throw new BadRequestException(
                     String.format("File type does not support %s: %s", operation, contentType));
@@ -1477,7 +1487,8 @@ public class FileServiceImpl implements FileService {
      *         root folder
      * @throws BadRequestException if filepath is invalid
      */
-    private String[] parseFilepath(String filepath) {
+    // Package-private for testing
+    String[] parseFilepath(String filepath) {
         if (filepath == null || filepath.trim().isEmpty()) {
             throw new BadRequestException("Filepath cannot be null or empty");
         }

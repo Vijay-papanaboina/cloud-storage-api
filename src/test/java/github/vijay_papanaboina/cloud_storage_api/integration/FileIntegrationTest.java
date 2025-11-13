@@ -2,6 +2,7 @@ package github.vijay_papanaboina.cloud_storage_api.integration;
 
 import github.vijay_papanaboina.cloud_storage_api.dto.FileResponse;
 import github.vijay_papanaboina.cloud_storage_api.dto.FileUpdateRequest;
+import github.vijay_papanaboina.cloud_storage_api.exception.StorageException;
 import github.vijay_papanaboina.cloud_storage_api.model.File;
 import github.vijay_papanaboina.cloud_storage_api.model.User;
 import org.junit.jupiter.api.Test;
@@ -11,9 +12,12 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+
+import org.springframework.data.domain.PageRequest;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -432,5 +436,90 @@ class FileIntegrationTest extends BaseIntegrationTest {
                                 .andExpect(status().isOk())
                                 .andExpect(jsonPath("$.content.length()").value(5))
                                 .andExpect(jsonPath("$.page.totalElements").value(15));
+        }
+
+        @Test
+        void uploadFile_ConcurrentUploadsWithSameFilename_ShouldAutoRename() throws Exception {
+                // Given
+                User user = createTestUser("testuser", "test@example.com");
+                String accessToken = generateAccessToken(user);
+                MockMultipartFile multipartFile = new MockMultipartFile(
+                                "file", "duplicate.txt", "text/plain", "test content".getBytes());
+
+                // First upload response
+                Map<String, Object> cloudinaryResponse1 = new HashMap<>();
+                cloudinaryResponse1.put("public_id", "test-public-id-1");
+                cloudinaryResponse1.put("url", "https://res.cloudinary.com/test/image/upload/test1.jpg");
+                cloudinaryResponse1.put("secure_url", "https://res.cloudinary.com/test/image/upload/test1.jpg");
+                cloudinaryResponse1.put("bytes", 1024L);
+
+                // Second upload response with different public_id
+                Map<String, Object> cloudinaryResponse2 = new HashMap<>();
+                cloudinaryResponse2.put("public_id", "test-public-id-2");
+                cloudinaryResponse2.put("url", "https://res.cloudinary.com/test/image/upload/test2.jpg");
+                cloudinaryResponse2.put("secure_url", "https://res.cloudinary.com/test/image/upload/test2.jpg");
+                cloudinaryResponse2.put("bytes", 1024L);
+
+                when(storageService.uploadFile(any(), eq(user.getId().toString()), any()))
+                                .thenReturn(cloudinaryResponse1)
+                                .thenReturn(cloudinaryResponse2);
+
+                // When - Upload first file
+                MvcResult result1 = mockMvc.perform(multipart("/api/files/upload")
+                                .file(multipartFile)
+                                .header("Authorization", "Bearer " + accessToken))
+                                .andExpect(status().isCreated())
+                                .andReturn();
+
+                FileResponse response1 = objectMapper.readValue(
+                                result1.getResponse().getContentAsString(), FileResponse.class);
+                assertThat(response1.getFilename()).isEqualTo("duplicate.txt");
+
+                // When - Upload second file with same name
+                MvcResult result2 = mockMvc.perform(multipart("/api/files/upload")
+                                .file(multipartFile)
+                                .header("Authorization", "Bearer " + accessToken))
+                                .andExpect(status().isCreated())
+                                .andReturn();
+
+                FileResponse response2 = objectMapper.readValue(
+                                result2.getResponse().getContentAsString(), FileResponse.class);
+
+                // Then - Second file should be auto-renamed
+                assertThat(response2.getFilename()).isEqualTo("duplicate-1.txt");
+                assertThat(response2.getId()).isNotEqualTo(response1.getId());
+        }
+
+        @Test
+        void uploadFile_CloudinaryFailure_ShouldCleanupDatabase() throws Exception {
+                // Given
+                User user = createTestUser("testuser", "test@example.com");
+                String accessToken = generateAccessToken(user);
+                MockMultipartFile multipartFile = new MockMultipartFile(
+                                "file", "test-cleanup.txt", "text/plain", "test content".getBytes());
+
+                // Mock Cloudinary failure
+                when(storageService.uploadFile(any(), any(), any()))
+                                .thenThrow(new StorageException("Cloudinary upload failed"));
+
+                // When/Then - Should return 503 (Service Unavailable) for StorageException
+                // and not leave orphaned DB records
+                mockMvc.perform(multipart("/api/files/upload")
+                                .file(multipartFile)
+                                .header("Authorization", "Bearer " + accessToken))
+                                .andExpect(status().isServiceUnavailable());
+
+                // Verify no file was saved in database (cleanup should have removed it)
+                // The service should clean up the reserved filename when Cloudinary upload
+                // fails
+                // We verify by checking that no file with this exact name exists
+                List<File> allFiles = fileRepository.findAll();
+                Optional<File> savedFile = allFiles.stream()
+                                .filter(f -> f.getUser().getId().equals(user.getId())
+                                                && f.getFilename().equals("test-cleanup.txt")
+                                                && !f.getDeleted())
+                                .findFirst();
+                // Cleanup should have removed the reserved file, so this should be empty
+                assertThat(savedFile).isEmpty();
         }
 }

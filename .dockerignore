@@ -1,0 +1,75 @@
+# Build artifacts
+target/
+*.jar
+*.war
+*.ear
+*.class
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Logs
+logs/
+*.log
+
+# IDE files
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.project
+.classpath
+.settings/
+.factorypath
+.apt_generated
+.sts4-cache/
+.nb-gradle/
+
+# Maven
+.mvn/wrapper/maven-wrapper.jar
+.mvn/wrapper/maven-wrapper.properties
+
+# Documentation
+README.md
+HELP.md
+*.md
+docs/
+
+# Test files and reports
+**/test/
+**/*Test.java
+**/*Tests.java
+**/surefire-reports/
+**/test-classes/
+
+# Application configuration files (use environment variables instead)
+application-dev.yaml
+application-dev.yaml.example
+application-test.yaml
+application-prod.yaml
+application-dev.yml
+application-test.yml
+application-prod.yml
+.env
+.env.local
+.env.*.local
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# jqwik Property-Based Testing
+.jqwik-database
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+

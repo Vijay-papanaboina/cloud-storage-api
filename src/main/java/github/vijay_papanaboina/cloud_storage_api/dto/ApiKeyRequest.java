@@ -2,6 +2,7 @@ package github.vijay_papanaboina.cloud_storage_api.dto;
 
 import github.vijay_papanaboina.cloud_storage_api.model.ApiKeyPermission;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
 import java.util.Set;
@@ -16,6 +17,7 @@ public class ApiKeyRequest {
     @Size(max = 255, message = "API key name must not exceed 255 characters")
     private String name;
 
+    @NotNull(message = "expiresInDays is required")
     private Integer expiresInDays;
 
     private ApiKeyPermission permissions = ApiKeyPermission.READ_ONLY;
@@ -50,8 +52,11 @@ public class ApiKeyRequest {
     }
 
     public void setExpiresInDays(Integer expiresInDays) {
+        if (expiresInDays == null) {
+            throw new IllegalArgumentException("expiresInDays is required and cannot be null");
+        }
         // Validate that expiresInDays is one of the allowed values (30, 60, or 90)
-        if (expiresInDays != null && !ALLOWED_EXPIRY_DAYS.contains(expiresInDays)) {
+        if (!ALLOWED_EXPIRY_DAYS.contains(expiresInDays)) {
             throw new IllegalArgumentException(
                     "expiresInDays must be one of: 30, 60, or 90 days. Got: " + expiresInDays);
         }

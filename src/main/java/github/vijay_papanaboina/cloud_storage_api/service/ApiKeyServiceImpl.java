@@ -60,20 +60,17 @@ public class ApiKeyServiceImpl implements ApiKeyService {
             throw new BadRequestException("User account is inactive");
         }
 
-        // Validate and calculate expiration date if provided
-        Instant expiresAt = null;
-        if (request.getExpiresInDays() != null) {
-            // Validate that expiresInDays is one of the allowed values (30, 60, or 90)
-            if (!Set.of(30, 60, 90).contains(request.getExpiresInDays())) {
-                log.warn("Invalid expiresInDays value: userId={}, expiresInDays={}", userId,
-                        request.getExpiresInDays());
-                throw new BadRequestException("expiresInDays must be one of: 30, 60, or 90 days");
-            }
-            // Calculate expiration date: current time + expiresInDays
-            expiresAt = Instant.now().plusSeconds(request.getExpiresInDays() * 24L * 60L * 60L);
-            log.info("API key will expire in {} days: userId={}, expiresAt={}", request.getExpiresInDays(), userId,
-                    expiresAt);
+        // Validate and calculate expiration date
+        // Validate that expiresInDays is one of the allowed values (30, 60, or 90)
+        if (!Set.of(30, 60, 90).contains(request.getExpiresInDays())) {
+            log.warn("Invalid expiresInDays value: userId={}, expiresInDays={}", userId,
+                    request.getExpiresInDays());
+            throw new BadRequestException("expiresInDays must be one of: 30, 60, or 90 days");
         }
+        // Calculate expiration date: current time + expiresInDays
+        Instant expiresAt = Instant.now().plusSeconds(request.getExpiresInDays() * 24L * 60L * 60L);
+        log.info("API key will expire in {} days: userId={}, expiresAt={}", request.getExpiresInDays(), userId,
+                expiresAt);
 
         // Generate unique API key
         String apiKeyValue = generateUniqueApiKey();

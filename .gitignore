@@ -32,6 +32,9 @@ build/
 ### VS Code ###
 .vscode/
 
+### jqwik Property-Based Testing ###
+.jqwik-database
+
 ### Application Configuration ###
 # Development configuration with sensitive data
 application-dev.yaml

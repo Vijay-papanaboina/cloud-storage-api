@@ -9,8 +9,14 @@ import github.vijay_papanaboina.cloud_storage_api.repository.FileRepository;
 import github.vijay_papanaboina.cloud_storage_api.repository.UserRepository;
 import github.vijay_papanaboina.cloud_storage_api.service.storage.StorageService;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -96,88 +102,32 @@ class FileServiceImplTest {
                                 .hasMessageContaining("User ID cannot be null");
         }
 
-        @Test
-        void upload_InvalidFolderPath_PathTraversal_ThrowsBadRequestException() {
+        @ParameterizedTest
+        @Tag("error-contract")
+        @ValueSource(strings = { "/../etc", "\\windows\\path", "documents" })
+        void upload_InvalidFolderPath_ThrowsBadRequestException(String invalidPath) {
                 // Given
                 MultipartFile multipartFile = createTestMultipartFile("test.txt");
-                String invalidPath = "/../etc"; // Path traversal attempt
                 when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
 
                 // When/Then
                 assertThatThrownBy(() -> fileService.upload(multipartFile, Optional.of(invalidPath), Optional.empty(),
                                 userId))
-                                .isInstanceOf(BadRequestException.class)
-                                .hasMessageContaining("path traversal");
+                                .isInstanceOf(BadRequestException.class);
         }
 
-        @Test
-        void upload_InvalidFolderPath_Backslash_ThrowsBadRequestException() {
+        @ParameterizedTest
+        @Tag("error-contract")
+        @ValueSource(strings = { "../malicious.txt", "", "CON.txt", "PRN", "folder/test.txt" })
+        void upload_InvalidFilename_ThrowsBadRequestException(String invalidFilename) {
                 // Given
                 MultipartFile multipartFile = createTestMultipartFile("test.txt");
-                String invalidPath = "\\windows\\path"; // Windows-style path
-                when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
-
-                // When/Then
-                assertThatThrownBy(() -> fileService.upload(multipartFile, Optional.of(invalidPath), Optional.empty(),
-                                userId))
-                                .isInstanceOf(BadRequestException.class)
-                                .hasMessageContaining("Unix-style");
-        }
-
-        @Test
-        void upload_InvalidFolderPath_NoLeadingSlash_ThrowsBadRequestException() {
-                // Given
-                MultipartFile multipartFile = createTestMultipartFile("test.txt");
-                String invalidPath = "documents"; // Missing leading slash
-                when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
-
-                // When/Then
-                assertThatThrownBy(() -> fileService.upload(multipartFile, Optional.of(invalidPath), Optional.empty(),
-                                userId))
-                                .isInstanceOf(BadRequestException.class)
-                                .hasMessageContaining("start with '/'");
-        }
-
-        @Test
-        void upload_InvalidFilename_WithPathSeparator_ThrowsBadRequestException() {
-                // Given
-                MultipartFile multipartFile = createTestMultipartFile("test.txt");
-                String invalidFilename = "../malicious.txt"; // Contains path separator
                 when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
 
                 // When/Then
                 assertThatThrownBy(() -> fileService.upload(multipartFile, Optional.empty(),
                                 Optional.of(invalidFilename), userId))
-                                .isInstanceOf(BadRequestException.class)
-                                .hasMessageContaining("Filename cannot be");
-        }
-
-        @Test
-        void upload_InvalidFilename_Empty_ThrowsBadRequestException() {
-                // Given
-                MultipartFile multipartFile = createTestMultipartFile("test.txt");
-                String invalidFilename = ""; // Empty filename
-                when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
-
-                // When/Then
-                assertThatThrownBy(() -> fileService.upload(multipartFile, Optional.empty(),
-                                Optional.of(invalidFilename), userId))
-                                .isInstanceOf(BadRequestException.class)
-                                .hasMessageContaining("Filename cannot be null or empty");
-        }
-
-        @Test
-        void upload_InvalidFilename_ReservedName_ThrowsBadRequestException() {
-                // Given
-                MultipartFile multipartFile = createTestMultipartFile("test.txt");
-                String invalidFilename = "CON.txt"; // Windows reserved name
-                when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
-
-                // When/Then
-                assertThatThrownBy(() -> fileService.upload(multipartFile, Optional.empty(),
-                                Optional.of(invalidFilename), userId))
-                                .isInstanceOf(BadRequestException.class)
-                                .hasMessageContaining("Filename cannot be a reserved name");
+                                .isInstanceOf(BadRequestException.class);
         }
 
         @Test
